@@ -81,7 +81,7 @@ impl TaskEngine {
     pub(crate) fn claim_workload(&self, id: &str) -> Result<WorkloadJob> {
         eefn::request_drafts::validate_id(id)?;
         let mut active = self.active.lock().expect("active jobs");
-        if active.closing || active.contains(id) {
+        if active.closing || active.contains(id) || active.pending_stop_intents.contains(id) {
             bail!("Coordinator is stopping or this job already owns a workload lifetime")
         }
         active.workloads.retain(|_, state| state.active());

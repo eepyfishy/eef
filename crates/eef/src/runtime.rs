@@ -1031,6 +1031,14 @@ impl Runtime {
                     Err(_) => Err(anyhow::anyhow!("Invalid stop status command")),
                 }
             }
+            "jobs.stop" => match message["payload"]["id"].as_str() {
+                Some(id) => {
+                    self.engine
+                        .stop_job_request(id, Some(context.origin_node()))
+                        .await
+                }
+                None => Err(anyhow::anyhow!("Job ID is required")),
+            },
             kind if kind.starts_with("jobs.") => {
                 self.engine
                     .job_request(kind, message["payload"].clone(), Some(context))

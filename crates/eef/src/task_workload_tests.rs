@@ -80,6 +80,77 @@ fn stopping_preparing_workload_cancels_unissued_plan_without_creating_an_executi
 }
 
 #[tokio::test]
+async fn public_stop_holds_only_the_target_claim_gate_during_a_contended_sqlite_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("jobs.db");
+    let blocker = rusqlite::Connection::open(&path).unwrap();
+    let store = crate::jobs::JobStore::open(&path, 10, 2 * 1024 * 1024).unwrap();
+    let engine = TaskEngine::with_store(EventBus::new(20), store);
+    let plan = approved(&engine);
+    let id = &plan.plan_id;
+    let mut changes = engine.stop_changes.subscribe();
+
+    // Another connection reserves the real database writer while allowing reads.
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let mut stop = Box::pin(engine.stop_job_request(id, None));
+    tokio::select! {
+        biased;
+        result = &mut stop => panic!("Stop completed while the SQLite writer was held: {result:?}"),
+        result = timeout(Duration::from_secs(2), async {
+            loop {
+                if engine.active.try_lock().is_ok_and(|active| active.pending_stop_intents.contains(id)) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        }) => result.expect("Stop must release the active-job lock before writing"),
+    }
+    assert!(engine.claim_workload(id).is_err());
+    assert!(
+        engine
+            .claim(id, || panic!("A pending stop must exclude admission"))
+            .is_err()
+    );
+    let unrelated = Uuid::new_v4().simple().to_string();
+    engine
+        .claim_workload(&unrelated)
+        .unwrap()
+        .check(&unrelated)
+        .unwrap();
+    assert!(!changes.has_changed().unwrap());
+
+    blocker.execute_batch("ROLLBACK").unwrap();
+    let stopped = stop.await.unwrap();
+    assert_eq!(stopped["status"], "cancelled");
+    changes.changed().await.unwrap();
+    assert!(
+        !engine
+            .active
+            .lock()
+            .unwrap()
+            .pending_stop_intents
+            .contains(id)
+    );
+    assert!(engine.store.get(id).unwrap().execution.is_none());
+}
+
+#[tokio::test]
+async fn public_stop_refuses_a_contended_active_gate_without_reversing_lock_order() {
+    let engine = engine();
+    let plan = approved(&engine);
+    let owner = engine.claim_workload(&plan.plan_id).unwrap();
+    let active = engine.active.lock().unwrap();
+    let error = engine
+        .stop_job_request(&plan.plan_id, None)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("Active job control is busy"));
+    drop(active);
+    owner.check(&plan.plan_id).unwrap();
+    assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), json!(plan));
+}
+
+#[tokio::test]
 async fn shutdown_revokes_control_before_waiting_for_original_workload_lifetime() {
     let engine = engine();
     let id = Uuid::new_v4().simple().to_string();

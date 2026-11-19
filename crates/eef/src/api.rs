@@ -855,6 +855,9 @@ async fn jobs_control(
     if !matches!(action.as_str(), "pause" | "resume" | "stop") {
         return Err(anyhow::anyhow!("Unknown job control").into());
     }
+    if action == "stop" {
+        return Ok(Json(runtime.engine.stop_job_request(&id, None).await?));
+    }
     Ok(Json(runtime.engine.job_request(
         &format!("jobs.{action}"),
         json!({"id":id}),

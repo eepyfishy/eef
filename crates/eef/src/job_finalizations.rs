@@ -22,6 +22,8 @@ pub(crate) use workload_stop::StopCheckpoint;
 #[path = "job_grant_stop.rs"]
 mod grant_stop;
 pub(crate) use grant_stop::GrantStopCheckpoint;
+#[path = "job_stop_intent.rs"]
+mod stop_intent;
 #[path = "job_workload_issuance.rs"]
 mod workload_issuance;
 pub(crate) use workload_issuance::CommittedIssue;
@@ -75,12 +77,20 @@ impl Queue {
     pub(super) fn for_workload_writes(max_count: usize, max_bytes: usize) -> Self {
         Self::new(max_count.min(4), max_bytes)
     }
+    pub(super) fn for_stop_intents() -> Self {
+        // Small command metadata needs its own admission even when issuance
+        // runs out of reserved completion capacity.
+        Self::with_capacity(2)
+    }
     pub(super) fn new(max_count: usize, max_bytes: usize) -> Self {
         // Each issued job already reserves completion headroom in the same
         // owner's quota. Never allocate a channel from an unbounded config value.
         let capacity = max_count
             .min(max_bytes / crate::workload_jobs::COMPLETION_RESERVE)
             .min(MAX_FINALIZATIONS);
+        Self::with_capacity(capacity)
+    }
+    fn with_capacity(capacity: usize) -> Self {
         Self {
             sender: Mutex::new(None),
             slots: Arc::new(Semaphore::new(capacity)),

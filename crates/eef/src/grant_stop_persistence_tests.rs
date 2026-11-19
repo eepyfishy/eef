@@ -402,3 +402,92 @@ async fn unrelated_stop_notifications_cannot_retry_failed_stop_admission() {
     assert_eq!(engine.store.grant_stop_entered(), 0);
     assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), before);
 }
+
+#[tokio::test]
+async fn public_stop_checks_the_authenticated_origin_and_preserves_runner_retirement() {
+    let engine = TaskEngine::new(EventBus::new(20));
+    let (plan, grant, _) = crate::request_execution::tests::issued(&engine);
+    let id = &plan.plan_id;
+    let owner = engine.claim(id, || Ok(())).unwrap();
+    let mut changes = engine.stop_changes.subscribe();
+    let origin = grant.request_context.origin_node();
+    assert_ne!(origin, "other-origin");
+    assert!(
+        engine
+            .stop_job_request(id, Some("other-origin"))
+            .await
+            .is_err()
+    );
+    assert_eq!(json!(engine.store.get(id).unwrap()), json!(plan));
+    assert!(!changes.has_changed().unwrap());
+
+    let report = engine.stop_job_request(id, Some(origin)).await.unwrap();
+    assert_eq!(report["status"], "stopping");
+    assert_eq!(report["stop_requested"], true);
+    assert_eq!(report["remote_stop_confirmed"], false);
+    changes.changed().await.unwrap();
+    let saved = engine.store.get(id).unwrap();
+    assert_eq!(saved.status, PlanStatus::Stopping);
+    assert!(saved.execution.unwrap().stop_requested_at_ms.is_some());
+    drop(owner);
+    let retired = engine.store.get(id).unwrap();
+    assert_eq!(retired.status, PlanStatus::Interrupted);
+    let execution = retired.execution.unwrap();
+    assert_eq!(execution.attempts[0].grant, grant);
+    assert!(execution.attempts[0].stop.is_none());
+}
+
+#[tokio::test]
+async fn abandoned_public_stops_keep_native_capacity_without_revoking_or_writing() {
+    use std::future::Future;
+    let engine = TaskEngine::new(EventBus::new(20));
+    let (plan, _) = crate::workload_jobs::tests::planned(&engine);
+    let id = &plan.plan_id;
+    let owner = engine.claim_workload(id).unwrap();
+    let (held, ready) = hold_grant_journal(engine.store.clone());
+    ready.await.unwrap();
+    let capacity = engine.store.stop_intent_available();
+    let mut first = Box::pin(engine.cancel_before(id, None, stop_end()));
+    let mut second = Box::pin(engine.cancel_before(id, None, stop_end()));
+    std::future::poll_fn(|cx| {
+        assert!(first.as_mut().poll(cx).is_pending());
+        assert!(second.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while engine.store.stop_intent_started() == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(engine.store.stop_intent_available(), 0);
+    assert!(
+        engine
+            .cancel_before(id, None, stop_end())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("capacity unavailable")
+    );
+    drop(first);
+    drop(second);
+    assert_eq!(engine.store.stop_intent_available(), 0);
+    owner.check(id).unwrap();
+    drop(held);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while engine.store.stop_intent_available() != capacity {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        engine.store.stop_intent_started(),
+        1,
+        "An abandoned queued request never reads the journal"
+    );
+    assert_eq!(json!(engine.store.get(id).unwrap()), json!(plan));
+    owner.check(id).unwrap();
+}

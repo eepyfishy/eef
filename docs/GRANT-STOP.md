@@ -71,10 +71,31 @@ retained extra gates. Scoped immutable-source/raw-log review retains the origina
 public process-stop and paired-audio command checks. The synthetic held-journal
 regressions and native command checks have different scopes; neither establishes
 physical two-PC stop or universal termination.
-The initial `TaskEngine.cancel` transaction and other synchronous journal callers
-still need separate asynchronous work; this is not a claim that every public
-command is immune to storage contention. Broader strong-stop, continuous/media,
-physical and stable-release requirements remain open.
+Broader strong-stop, continuous media, physical and stable release requirements
+remain open.
+
+## Public stop intent persistence (development)
+
+Both the owner HTTP command and the authenticated origin node command use a
+native journal worker for the initial stop request. It admits up to two commands
+at once, including those waiting for storage. The shared production worker starts
+on demand. It uses the existing journal and checks origin ownership inside the
+same edit that records the stop.
+
+While SQLite writes, a reservation excludes new claims for that job. Other jobs
+can still take the active-job lock. If the lock is already busy at the point of
+admission, the request returns an error so the journal and active-job locks can
+make progress in their existing order. A caller waits up to five seconds. An
+abandoned request rechecks its deadline and caller before changing job control.
+A write already underway may commit after a timeout. Use the retained job state
+to check the outcome.
+
+The existing state transitions and live workload revocation rules apply. A
+successful response reports saved intent. Retained stop receipts and owned
+process observations provide the separate evidence about delivery and effects.
+The four new regression tests cover origin ownership, retiring the original
+runner, abandoned requests, admission capacity and actual SQLite lock contention.
+Hosted verification is pending.
 
 ## Admission races and node persistence
 

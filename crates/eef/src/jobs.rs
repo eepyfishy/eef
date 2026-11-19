@@ -91,6 +91,7 @@ pub struct JobStore {
     reads: job_reads::Queue,
     finalizations: job_finalizations::Queue,
     workload_writes: job_finalizations::Queue,
+    stop_intents: job_finalizations::Queue,
     // Must remain after connection and file lock: field drop order releases
     // both before announcing retirement. The receiver owns no journal/lease.
     retired: RetirementSignal,
@@ -277,6 +278,7 @@ impl JobStore {
             reads: Default::default(),
             finalizations: job_finalizations::Queue::new(max_count, max_bytes),
             workload_writes: job_finalizations::Queue::for_workload_writes(max_count, max_bytes),
+            stop_intents: job_finalizations::Queue::for_stop_intents(),
             retired: RetirementSignal(tokio::sync::watch::channel(false).0),
         });
         store.validate_automations()?;
@@ -1086,7 +1088,7 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
 }
 
 impl crate::task::TaskEngine {
-    fn job_view(&self, plan: &Plan, details: bool) -> serde_json::Value {
+    pub(crate) fn job_view(&self, plan: &Plan, details: bool) -> serde_json::Value {
         let mut value = view(plan, details);
         if self.require_legacy_execution().is_err() {
             value["can_resume"] = json!(false);

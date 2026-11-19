@@ -556,6 +556,21 @@ struct ActiveJobs {
     closing: bool,
     ids: HashSet<String>,
     workloads: BTreeMap<String, Arc<workload::State>>,
+    pending_stop_intents: HashSet<String>,
+}
+
+struct PendingStopIntent<'a> {
+    active: &'a std::sync::Mutex<ActiveJobs>,
+    id: &'a str,
+}
+impl Drop for PendingStopIntent<'_> {
+    fn drop(&mut self) {
+        self.active
+            .lock()
+            .expect("active jobs")
+            .pending_stop_intents
+            .remove(self.id);
+    }
 }
 
 pub(crate) struct ActiveJob {
@@ -644,7 +659,7 @@ impl TaskEngine {
         if active.closing {
             bail!("Coordinator is stopping; no new job execution is accepted")
         }
-        if active.contains(id) {
+        if active.contains(id) || active.pending_stop_intents.contains(id) {
             bail!("Job is already running")
         }
         // Admission and shutdown share this lock. Persist before registering a
@@ -750,46 +765,115 @@ impl TaskEngine {
         let result = self.store.change(
             id,
             "Stop requested; completed actions are not undone",
-            |plan| {
-                if plan.execution.as_ref().is_some_and(|e|e.attempts.iter().any(|a|a.state==crate::request_execution::AttemptState::Unknown)) {
-                    bail!("Issued work is uncertain; inspect grant receipts/effects before claiming remote stop. It will not replay or migrate.")
-                }
-                if matches!(
-                    plan.status,
-                    PlanStatus::Completed | PlanStatus::Failed | PlanStatus::Cancelled
-                ) {
-                    bail!("Job is already finished")
-                }
-                let pending_workload = workload.is_some() && plan.execution.is_none();
-                // Interpretation can own an active runner while the source is
-                // still review-only. It has no executable plan to put in Stopping.
-                let unissued_review=plan.is_review_request()&&plan.execution.is_none();
-                plan.status = if has_runner && !pending_workload && !unissued_review {
-                    PlanStatus::Stopping
-                } else {
-                    PlanStatus::Cancelled
-                };
-                if let Some(execution) = &mut plan.execution {
-                    if execution.stop_requested_at_ms.is_none() {
-                        execution.stop_requested_at_ms = Some(eefn::protocol::now_ms().max(execution.started_at_ms));
-                    }
-                }
-                if !has_runner || pending_workload {
-                    for task in &mut plan.tasks {
-                        if task.status == TaskStatus::Pending {
-                            task.status = TaskStatus::Cancelled;
-                        }
-                    }
-                }
-                Ok(())
-            },
+            |plan| Self::apply_stop_intent(plan, has_runner, workload_stop),
         );
         drop(active);
+        self.notify_stop_intent(&result, workload_stop);
+        result
+    }
+    pub(crate) fn cancel_in_journal(
+        &self,
+        id: &str,
+        origin: Option<&str>,
+        current: impl Fn() -> bool,
+    ) -> Result<Plan> {
+        let mut reservation = None;
+        let mut workload_stop = false;
+        let result = self.store.change(
+            id,
+            "Stop requested; completed actions are not undone",
+            |plan| {
+                anyhow::ensure!(current(), "Stop intent abandoned while waiting for storage");
+                anyhow::ensure!(
+                    origin.is_none_or(|origin| {
+                        plan.goal
+                            .request_context
+                            .as_ref()
+                            .is_some_and(|context| context.origin_node() == origin)
+                    }),
+                    "Job not found for this node"
+                );
+
+                // Existing admission and runner retirement use active -> journal.
+                // At this point we own the journal and must never wait for active.
+                let mut active = self.active.try_lock().map_err(|_| {
+                    anyhow::anyhow!(
+                        "Active job control is busy. Inspect the job before requesting stop again"
+                    )
+                })?;
+                anyhow::ensure!(
+                    current(),
+                    "Stop intent abandoned before changing job control"
+                );
+                anyhow::ensure!(
+                    active.pending_stop_intents.insert(id.to_owned()),
+                    "Stop intent is already pending"
+                );
+                reservation = Some(PendingStopIntent {
+                    active: &self.active,
+                    id,
+                });
+                let has_runner = active.contains(id);
+                if let Some(state) = active.workloads.get(id).filter(|state| state.active()) {
+                    state.cancel();
+                    workload_stop = true;
+                }
+                // Keep new claims out for this ID until publication. An existing
+                // runner's durable retirement still serializes on the same journal.
+                drop(active);
+                Self::apply_stop_intent(plan, has_runner, workload_stop)
+            },
+        );
+        // Do not reacquire active from the reservation's drop under the journal.
+        drop(reservation);
+        self.notify_stop_intent(&result, workload_stop);
+        result
+    }
+    fn notify_stop_intent(&self, result: &Result<Plan>, workload_stop: bool) {
         if result.is_ok() || workload_stop {
             self.stop_changes
                 .send_modify(|version| *version = version.wrapping_add(1));
         }
-        result
+    }
+    fn apply_stop_intent(plan: &mut Plan, has_runner: bool, workload_stop: bool) -> Result<()> {
+        if plan.execution.as_ref().is_some_and(|execution| {
+            execution
+                .attempts
+                .iter()
+                .any(|attempt| attempt.state == crate::request_execution::AttemptState::Unknown)
+        }) {
+            bail!(
+                "Issued work is uncertain; inspect grant receipts/effects before claiming remote stop. It will not replay or migrate."
+            );
+        }
+        if matches!(
+            plan.status,
+            PlanStatus::Completed | PlanStatus::Failed | PlanStatus::Cancelled
+        ) {
+            bail!("Job is already finished")
+        }
+        let pending_workload = workload_stop && plan.execution.is_none();
+        // Review-only interpretation has no executable plan to put in Stopping.
+        let unissued_review = plan.is_review_request() && plan.execution.is_none();
+        plan.status = if has_runner && !pending_workload && !unissued_review {
+            PlanStatus::Stopping
+        } else {
+            PlanStatus::Cancelled
+        };
+        if let Some(execution) = &mut plan.execution {
+            if execution.stop_requested_at_ms.is_none() {
+                execution.stop_requested_at_ms =
+                    Some(eefn::protocol::now_ms().max(execution.started_at_ms));
+            }
+        }
+        if !has_runner || pending_workload {
+            for task in &mut plan.tasks {
+                if task.status == TaskStatus::Pending {
+                    task.status = TaskStatus::Cancelled;
+                }
+            }
+        }
+        Ok(())
     }
     pub fn resume_job(self: &Arc<Self>, id: &str) -> Result<()> {
         if self.reviewed_only {
