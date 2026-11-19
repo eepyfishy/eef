@@ -6,6 +6,8 @@ use eefn::{
     microphone_submission::{MicrophoneCommand, MicrophoneInput, MicrophoneReport},
 };
 use serde_json::{Value, json};
+
+use crate::request_submission::ResolvedSource;
 fn refuse(
     input: &MicrophoneInput,
     context: &RequestContext,
@@ -28,18 +30,10 @@ impl crate::Runtime {
     ) -> Result<Value> {
         input.validate()?;
         eefn::job_commands::validate_operation_id(context.request_id())?;
-        let mut previous = self.engine.store.list()?.into_iter().filter(|p| {
-            p.goal.request_context.as_ref().is_some_and(|c| {
-                c.origin_node() == context.origin_node() && c.request_id() == context.request_id()
-            })
-        });
-        let saved = previous.next();
-        if previous.next().is_some() {
-            bail!("Ambiguous retained microphone request receipt")
-        }
+        let previous = self.retained_authoring_review(context)?;
         // Inspect exact retained intent/bindings BEFORE any provider lookup.
-        let concrete = if let Some(saved) = saved {
-            crate::jobs::validate_retained_review(&saved)?;
+        let concrete = if let Some(saved) = &previous {
+            crate::jobs::validate_retained_review(saved)?;
             if saved
                 .request_review
                 .as_ref()
@@ -94,14 +88,20 @@ impl crate::Runtime {
                 }
             }
         };
-        let result = self
-            .origin_concrete_request_with_sources(
+        let result = match self
+            .author_resolved_source(
                 concrete.clone(),
                 context,
-                None,
-                Some(input.clone()),
+                ResolvedSource::Microphone(input.clone()),
+                previous,
             )
-            .await?;
+            .await
+        {
+            Err(error) if error.downcast_ref() == Some(&RefusalReason::PreparationIncomplete) => {
+                return refuse(&input, context, RefusalReason::PreparationIncomplete);
+            }
+            result => result?,
+        };
         let report = json!(MicrophoneReport {
             schema_version: 1,
             report_type: "coordinator_microphone_request".into(),

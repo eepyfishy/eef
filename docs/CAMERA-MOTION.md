@@ -405,6 +405,8 @@ review confirmation and saved compilation. Exact receipt reuse reads retained
 choices before provider inspection, including offline or after shutdown. It cannot
 rebind a changed camera, extend authority or finish a partial compilation. That
 requires a separate explicit `requests compile-saved` decision.
+An overlapping submission that finds an uncompiled review at journal admission
+returns that review's incomplete status.
 
 Six source/receipt tests, three actual credential/TLS origin-coordinator tests and
 one CLI parser case accompany native executable checks for private bindings,

@@ -73,6 +73,9 @@ remains unconfirmed even when a saved review exists. Reusing exact typed input
 with a saved uncompiled review returns its incomplete status without querying a
 provider or continuing compilation. Further planning or cancellation must be
 explicit. Completed compilation receipts still return their original choices.
+This also applies when identical submissions overlap. If the second submission
+finds the first one's uncompiled review during journal admission, it returns
+`preparation_incomplete` without another review write or compile attempt.
 
 New typed microphone and camera requests use the authenticated source selection
 for initial review. Compilation checks disclosure and the exact live source

@@ -6,6 +6,8 @@ use eefn::{
 };
 use serde_json::{Value, json};
 
+use crate::request_submission::ResolvedSource;
+
 impl crate::Runtime {
     pub async fn origin_audio_request(
         &self,
@@ -14,18 +16,10 @@ impl crate::Runtime {
     ) -> Result<Value> {
         input.validate()?;
         eefn::job_commands::validate_operation_id(context.request_id())?;
-        let mut previous = self.engine.store.list()?.into_iter().filter(|p| {
-            p.goal.request_context.as_ref().is_some_and(|c| {
-                c.origin_node() == context.origin_node() && c.request_id() == context.request_id()
-            })
-        });
-        let saved = previous.next();
-        if previous.next().is_some() {
-            bail!("Ambiguous retained audio request receipt")
-        }
+        let previous = self.retained_authoring_review(context)?;
         // Retained intent/choices are checked BEFORE any current provider lookup.
-        let concrete = if let Some(saved) = saved {
-            crate::jobs::validate_retained_review(&saved)?;
+        let concrete = if let Some(saved) = &previous {
+            crate::jobs::validate_retained_review(saved)?;
             let draft = saved
                 .request_review
                 .as_ref()
@@ -57,7 +51,12 @@ impl crate::Runtime {
             input.resolve(context.origin_node(), &source, &destination)?
         };
         let result = self
-            .origin_concrete_request_with_source(concrete.clone(), context, Some(input.clone()))
+            .author_resolved_source(
+                concrete.clone(),
+                context,
+                ResolvedSource::Audio(input.clone()),
+                previous,
+            )
             .await?;
         let report = json!(AudioReport {
             schema_version: 1,

@@ -6,6 +6,12 @@ use eefn::{
 };
 use serde_json::{Value, json};
 
+pub(crate) enum ResolvedSource {
+    Audio(eefn::audio_submission::AudioInput),
+    Microphone(eefn::microphone_submission::MicrophoneInput),
+    Camera(eefn::camera_submission::CameraInput),
+}
+
 fn matches_source(
     plan: &crate::task::Plan,
     input: &ConcreteInput,
@@ -31,62 +37,62 @@ fn matches_source(
     Ok(())
 }
 impl crate::Runtime {
+    pub(crate) fn retained_authoring_review(
+        &self,
+        context: &RequestContext,
+    ) -> Result<Option<crate::task::Plan>> {
+        let mut matching = self.engine.store.list()?.into_iter().filter(|plan| {
+            plan.goal.request_context.as_ref().is_some_and(|saved| {
+                saved.origin_node() == context.origin_node()
+                    && saved.request_id() == context.request_id()
+            })
+        });
+        let previous = matching.next();
+        if matching.next().is_some() {
+            bail!("Ambiguous retained request receipt")
+        }
+        Ok(previous)
+    }
+
     pub async fn origin_concrete_request(
         &self,
         input: ConcreteInput,
         context: &RequestContext,
     ) -> Result<Value> {
-        self.origin_concrete_request_with_source(input, context, None)
-            .await
+        self.author_concrete(input, context, None).await
     }
-    pub(crate) async fn origin_concrete_request_with_source(
-        &self,
-        input: ConcreteInput,
-        context: &RequestContext,
-        source: Option<eefn::audio_submission::AudioInput>,
-    ) -> Result<Value> {
-        self.origin_concrete_request_with_sources(input, context, source, None)
-            .await
-    }
-    pub(crate) async fn origin_concrete_request_with_sources(
-        &self,
-        input: ConcreteInput,
-        context: &RequestContext,
-        source: Option<eefn::audio_submission::AudioInput>,
-        workload: Option<eefn::microphone_submission::MicrophoneInput>,
-    ) -> Result<Value> {
-        self.origin_concrete_request_with_all_sources(input, context, source, workload, None)
-            .await
-    }
-    pub(crate) async fn origin_concrete_request_with_camera(
-        &self,
-        input: ConcreteInput,
-        context: &RequestContext,
-        camera: eefn::camera_submission::CameraInput,
-    ) -> Result<Value> {
-        self.origin_concrete_request_with_all_sources(input, context, None, None, Some(camera))
-            .await
-    }
-    fn origin_concrete_request_with_all_sources<'a>(
+    pub(crate) fn author_resolved_source<'a>(
         &'a self,
         input: ConcreteInput,
         context: &'a RequestContext,
-        source: Option<eefn::audio_submission::AudioInput>,
-        workload: Option<eefn::microphone_submission::MicrophoneInput>,
-        camera: Option<eefn::camera_submission::CameraInput>,
+        source: ResolvedSource,
+        previous: Option<crate::task::Plan>,
+    ) -> futures_util::future::BoxFuture<'a, Result<Value>> {
+        self.author_concrete(input, context, Some((source, previous)))
+    }
+    fn author_concrete<'a>(
+        &'a self,
+        input: ConcreteInput,
+        context: &'a RequestContext,
+        resolved: Option<(ResolvedSource, Option<crate::task::Plan>)>,
     ) -> futures_util::future::BoxFuture<'a, Result<Value>> {
         // Keep one heap-owned command phase as source/review types grow. This
         // preserves the same awaited ownership and cancellation on Windows.
         Box::pin(async move {
-            if [source.is_some(), workload.is_some(), camera.is_some()]
-                .into_iter()
-                .filter(|v| *v)
-                .count()
-                > 1
-            {
-                bail!("Multiple typed request sources")
-            }
             input.validate()?;
+            eefn::job_commands::validate_operation_id(context.request_id())?;
+            let (source, workload, camera, previous) = match resolved {
+                Some((ResolvedSource::Audio(source), previous)) => {
+                    (Some(source), None, None, previous)
+                }
+                Some((ResolvedSource::Microphone(source), previous)) => {
+                    (None, Some(source), None, previous)
+                }
+                Some((ResolvedSource::Camera(source), previous)) => {
+                    (None, None, Some(source), previous)
+                }
+                None => (None, None, None, self.retained_authoring_review(context)?),
+            };
             if let Some(source) = &camera {
                 let template =
                     eefn::workload_leases::definition::Template::from_params(&input.input.params)?;
@@ -106,19 +112,6 @@ impl crate::Runtime {
                 if source.concrete(&pair, Some(context.origin_node()))? != input {
                     bail!("Typed audio source differs from concrete input")
                 }
-            }
-            eefn::job_commands::validate_operation_id(context.request_id())?;
-            // Historical exact receipts remain usable without current model/provider
-            // availability. A missing receipt is not proof of never-submitted work.
-            let mut matches = self.engine.store.list()?.into_iter().filter(|p| {
-                p.goal.request_context.as_ref().is_some_and(|c| {
-                    c.origin_node() == context.origin_node()
-                        && c.request_id() == context.request_id()
-                })
-            });
-            let previous = matches.next();
-            if matches.next().is_some() {
-                bail!("Ambiguous retained request receipt")
             }
             let (saved, creation_reused) = if let Some(saved) = previous {
                 crate::jobs::validate_retained_review(&saved)?;
@@ -194,6 +187,22 @@ impl crate::Runtime {
                 let admission = crate::request_drafts::store_review(&self.engine, draft, context)?;
                 (admission.plan, admission.reused)
             };
+            // Admission also checks under the journal lock. A concurrent author
+            // may have saved even when the earlier lookup did not find a review.
+            if creation_reused && saved.planning.is_none() {
+                if workload.is_some() {
+                    return Err(
+                        eefn::microphone_submission::outcomes::RefusalReason::PreparationIncomplete
+                            .into(),
+                    );
+                }
+                if camera.is_some() {
+                    return Err(
+                        eefn::camera_submission::outcomes::RefusalReason::PreparationIncomplete
+                            .into(),
+                    );
+                }
+            }
             let receipt = eefn::request_submission::compilation_receipt(
                 context.origin_node(),
                 context.request_id(),

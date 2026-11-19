@@ -388,6 +388,22 @@ async fn microphone_compile_failure_after_review_save_remains_unknown_not_a_pref
     db.execute_batch("DROP TRIGGER refuse_microphone_compile")
         .unwrap();
     drop(db);
+    let retained_input = saved[0].request_review.as_ref().unwrap().concrete_input.as_ref().unwrap();
+    let template = eefn::workload_leases::definition::Template::from_params(&retained_input.params).unwrap();
+    let concrete = command.input.concrete(&template, Some("origin")).unwrap();
+    // A second submission passed its earlier lookup before the first saved.
+    // The authoritative admission can now find the existing review under lock.
+    let raced = f.runtime.author_resolved_source(
+        concrete,
+        &context,
+        crate::request_submission::ResolvedSource::Microphone(command.input.clone()),
+        None,
+    ).await.unwrap_err();
+    assert_eq!(
+        raced.downcast_ref(),
+        Some(&eefn::microphone_submission::outcomes::RefusalReason::PreparationIncomplete)
+    );
+    assert_eq!(json!(f.runtime.engine.store.get(&saved[0].plan_id).unwrap()), original);
     // Source is available and the original fixture obstruction is gone. Reuse
     // must still inspect the partial receipt, never silently finish its compile.
     let retained = f
