@@ -91,6 +91,7 @@ async fn reviewed_vision_commands_execute_once_and_deliver_durable_results_with_
     Box::pin(full_vision_commands()).await;
 }
 async fn full_vision_commands() {
+    let _trace = trace_workload_authoring();
     use clap::Parser;
     use std::sync::atomic::{AtomicUsize, Ordering};
     #[derive(Parser)]

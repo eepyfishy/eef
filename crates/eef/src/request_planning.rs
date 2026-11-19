@@ -714,14 +714,26 @@ impl crate::Runtime {
                 bail!("Continuous planning requires its exact reviewed template")
             }
             let template = eefn::workload_leases::definition::Template::from_params(&input.params)?;
+            let failed = |phase| {
+                tracing::warn!(target: "eef::workload_authoring", job_id = %saved.plan_id, phase,
+                    "Workload compilation could not confirm the retained review");
+            };
             if let Some(origin) = origin {
-                let permitted = self.disclosed_planning_nodes(origin).await?;
+                let permitted = self
+                    .disclosed_planning_nodes(origin)
+                    .await
+                    .inspect_err(|_| failed("disclosure_check"))?;
                 if !permitted.contains(&template.executor_node) {
+                    failed("disclosure_check");
                     bail!("Source node is not disclosed to this origin")
                 }
             }
-            self.node_server.workload_source(&template, 5).await?;
-            let plan = crate::workload_jobs::compile(&self.engine, &request.command)?;
+            self.node_server
+                .workload_source(&template, 5)
+                .await
+                .inspect_err(|_| failed("source_check"))?;
+            let plan = crate::workload_jobs::compile(&self.engine, &request.command)
+                .inspect_err(|_| failed("compile_checkpoint"))?;
             return Ok(report(plan, &request.command, &self.instance_id, false));
         }
         if draft.current().workload != eefn::interpretation::Workload::OneShot {

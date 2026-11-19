@@ -148,17 +148,21 @@ impl crate::Runtime {
                     {
                         bail!("Continuous source node unavailable or not disclosed")
                     }
-                    // These built-in sources are independent of one-shot media
-                    // plugin. Review binds its own authenticated passive snapshot;
-                    // permission/listening/policy and live execution stay separate.
-                    self.node_server.workload_source(&template, 5).await?;
-                    if !self
-                        .disclosed_planning_nodes(context.origin_node())
-                        .await?
-                        .contains(&template.executor_node)
-                    {
-                        bail!("Continuous source disclosure changed during inspection")
+                    // The typed camera and microphone callers already resolved
+                    // their exact choices from an authenticated source snapshot.
+                    // An ordinary concrete request provides no such observation.
+                    if workload.is_none() && camera.is_none() {
+                        self.node_server.workload_source(&template, 5).await?;
+                        if !self
+                            .disclosed_planning_nodes(context.origin_node())
+                            .await?
+                            .contains(&template.executor_node)
+                        {
+                            bail!("Continuous source disclosure changed during inspection")
+                        }
                     }
+                    // Compilation rechecks the exact source after review is
+                    // saved. Authoring has no listening or execution authority.
                     // The retained review describes both the session wrapper and
                     // its reviewed media operation. This source-scoped vocabulary is
                     // justified by the snapshot above, not the one-shot plugin.

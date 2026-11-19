@@ -422,7 +422,17 @@ async fn real_camera_commands_origin_tls_completion_stop_and_reconnect_share_dur
     full_source_cases(FullSourceKind::Camera).await;
 }
 
+fn trace_workload_authoring() -> tracing::subscriber::DefaultGuard {
+    tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_env_filter("off,eef::workload_authoring=warn")
+            .with_test_writer()
+            .finish(),
+    )
+}
+
 async fn full_source_cases(kind: FullSourceKind) {
+    let _trace = trace_workload_authoring();
     let fixture = tempfile::tempdir().unwrap();
     let python = full_source_venv(fixture.path()).await;
     let http = reqwest::Client::builder()

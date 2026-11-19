@@ -74,6 +74,12 @@ with a saved uncompiled review returns its incomplete status without querying a
 provider or continuing compilation. Further planning or cancellation must be
 explicit. Completed compilation receipts still return their original choices.
 
+New typed microphone and camera requests use the authenticated source selection
+for initial review. Compilation checks disclosure and the exact live source
+again after saving the review. Coordinator warnings under
+`eef::workload_authoring` identify the failed phase and retained job ID without
+including request text or source bindings. Hosted verification is pending.
+
 To explicitly finish a saved concrete review after inspecting it, use its exact
 review revision:
 
