@@ -204,18 +204,35 @@ async fn native_manifest_refusal_and_control_disconnect_do_not_leave_a_receiver_
             rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
                 .unwrap();
         let g = &e.attempts[index].grant;
-        let state: Option<String> = journal
-            .query_row(
-                "SELECT state FROM execution_receipts WHERE issuer_id=?1 AND grant_id=?2",
-                rusqlite::params![g.issuer_id, g.grant_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .unwrap();
+        let read_state = || -> Option<String> {
+            journal
+                .query_row(
+                    "SELECT state FROM execution_receipts WHERE issuer_id=?1 AND grant_id=?2",
+                    rusqlite::params![g.issuer_id, g.grant_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .unwrap()
+        };
         if index == 0 {
-            assert!(state.is_none(), "changed producer consumed a source grant");
+            assert!(
+                read_state().is_none(),
+                "changed producer consumed a source grant"
+            );
         } else {
-            assert_eq!(state.as_deref(), Some("unknown"));
+            // Closing the listener and committing the queued final checkpoint
+            // are separate. Read the original database until that write lands.
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    match read_state().as_deref() {
+                        Some("unknown") => break,
+                        Some("accepted") => tokio::time::sleep(Duration::from_millis(10)).await,
+                        state => panic!("Unexpected destination receipt state: {state:?}"),
+                    }
+                }
+            })
+            .await
+            .expect("Destination cancellation did not persist uncertainty");
         }
     }
     f.engine.store.interrupt(&f.plan.plan_id).unwrap();

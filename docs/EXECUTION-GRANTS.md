@@ -112,6 +112,13 @@ Held-journal tests exercise a late exact checkpoint, immediate admission denial
 while its slot remains occupied, and nonblocking cancellation and runtime
 shutdown with one retained uncertainty report. Hosted verification is pending.
 
+The first hosted candidate, `3238516`, failed both Linux jobs in
+[run 44473414210](https://github.com/eepyfishy/eef/actions/runs/44473414210).
+Two peer fixtures read the journal before queued uncertainty was written. A
+coordinator stop fixture also contended for the active-job lock while waiting
+for the worker to acquire it. The follow-up waits for the original receipt and
+private revocation signal, respectively, with the same outcome assertions.
+
 ## Limits and honest termination
 
 Limits bound the RPC execution future and serialized result, not physical CPU/RAM

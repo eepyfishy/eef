@@ -89,6 +89,8 @@ async fn public_stop_holds_only_the_target_claim_gate_during_a_contended_sqlite_
     let plan = approved(&engine);
     let id = &plan.plan_id;
     let mut changes = engine.stop_changes.subscribe();
+    let original = engine.claim_workload(id).unwrap();
+    let mut retired = original.stop_receiver();
 
     // Another connection reserves the real database writer while allowing reads.
     blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
@@ -97,6 +99,10 @@ async fn public_stop_holds_only_the_target_claim_gate_during_a_contended_sqlite_
         biased;
         result = &mut stop => panic!("Stop completed while the SQLite writer was held: {result:?}"),
         result = timeout(Duration::from_secs(2), async {
+            // Wait for the worker's actual revocation before probing the mutex.
+            // Earlier probes could cause the intentional busy refusal themselves.
+            retired.changed().await.unwrap();
+            assert!(*retired.borrow());
             loop {
                 if engine.active.try_lock().is_ok_and(|active| active.pending_stop_intents.contains(id)) {
                     break;
@@ -105,6 +111,7 @@ async fn public_stop_holds_only_the_target_claim_gate_during_a_contended_sqlite_
             }
         }) => result.expect("Stop must release the active-job lock before writing"),
     }
+    drop(original);
     assert!(engine.claim_workload(id).is_err());
     assert!(
         engine

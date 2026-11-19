@@ -313,8 +313,12 @@ async fn dropped_admission_and_reopened_journal_never_readmit_an_attempt() {
     drop(admitted);
     assert!(engine.peer_slot().is_ok());
     let g = f.grant(Role::Source);
+    assert!(
+        ledger.claim(g).is_err(),
+        "The consumed slot fences replay during retirement"
+    );
     assert_eq!(
-        ledger.receipt(&g.issuer_id, &g.grant_id).unwrap()["state"],
+        ledger.wait_for_final_report(g).await["receipt"]["state"],
         "unknown"
     );
     drop(ledger);
