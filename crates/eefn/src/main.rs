@@ -2888,27 +2888,7 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     }
     if let Commands::Grants { command: action } = command {
         let file = load_file(&args.config)?;
-        let node_id = file.node_id;
-        let service = || NodeService::new(args.config.clone(), node_id.clone());
-        let id = match action {
-            eefn::grants::GrantAction::Receipt { id }
-            | eefn::grants::GrantAction::Result { id }
-            | eefn::grants::GrantAction::StopReceipt { id }
-            | eefn::grants::GrantAction::StopStatus { id } => id,
-        };
-        let request = eefn::grants::ReceiptRequest {
-            schema_version: 1,
-            expected_node_id: node_id.clone(),
-            grant_id: id.clone(),
-        };
-        return match action {
-            eefn::grants::GrantAction::Receipt { .. } => service().grant_receipt(request),
-            eefn::grants::GrantAction::Result { .. } => service().grant_result(request),
-            eefn::grants::GrantAction::StopReceipt { .. } => service().local_stop_receipt(request),
-            eefn::grants::GrantAction::StopStatus { .. } => {
-                eefn::workload_stop_exit::inspect_local(&args.config, &node_id, id)
-            }
-        };
+        return action.inspect_local(&args.config, &file.node_id);
     }
     if let Commands::Connection { command } = command {
         return execute_connection_command(args, command).await;

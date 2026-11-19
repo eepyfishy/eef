@@ -264,19 +264,13 @@ impl crate::NodeService {
         if request.schema_version != 1 || request.expected_node_id != self.node_id {
             bail!("Stop inspection targets another node")
         }
-        let db = Connection::open_with_flags(
-            super::super::journal_path(&self.config_path),
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )?;
-        db.busy_timeout(Duration::from_millis(200))?;
-        Ok(json!(read_inspection(
-            &db,
-            &self.node_id,
-            None,
-            &request.grant_id,
-            None
-        )?))
+        inspect_local(&self.config_path, &self.node_id, &request.grant_id)
     }
+}
+
+pub(crate) fn inspect_local(config: &Path, node: &str, id: &str) -> Result<Value> {
+    let db = super::super::open_inspection_journal(config)?;
+    Ok(json!(read_inspection(&db, node, None, id, None)?))
 }
 
 pub fn render(value: &Inspection) -> Result<String> {

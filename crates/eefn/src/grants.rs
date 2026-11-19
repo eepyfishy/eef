@@ -40,6 +40,14 @@ pub fn journal_path(config: &Path) -> std::path::PathBuf {
     name.push(".grant-receipts.sqlite3");
     name.into()
 }
+fn open_inspection_journal(config: &Path) -> Result<Connection> {
+    let db = Connection::open_with_flags(
+        journal_path(config),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    db.busy_timeout(Duration::from_millis(200))?;
+    Ok(db)
+}
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct GrantDenied(pub &'static str);
@@ -110,6 +118,17 @@ pub enum GrantAction {
         id: String,
     },
 }
+impl GrantAction {
+    /// Offline grant commands read the journal directly, without node startup or recovery.
+    pub fn inspect_local(&self, config: &Path, node: &str) -> Result<Value> {
+        match self {
+            Self::Receipt { id } => inspect_consumed(config, node, id),
+            Self::Result { id } => inspect_result(config, node, id),
+            Self::StopReceipt { id } => stop::inspection::inspect_local(config, node, id),
+            Self::StopStatus { id } => crate::workload_stop_exit::inspect_local(config, node, id),
+        }
+    }
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReceiptRequest {
@@ -123,37 +142,36 @@ impl crate::NodeService {
         if request.schema_version != 1 || request.expected_node_id != self.node_id {
             bail!("Invalid grant result schema/node")
         }
-        let db = Connection::open_with_flags(
-            journal_path(&self.config_path),
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )?;
-        db.busy_timeout(Duration::from_millis(200))?;
-        let result =
-            crate::request_result::read_result(&db, &self.node_id, None, &request.grant_id)?;
-        Ok(
-            json!({"schema_version":1,"report_type":"node_grant_result","success":true,
-            "node_id":self.node_id,"grant_id":request.grant_id,"result":result,
-            "execution_requested":false,"automatically_retried":false,"reconciled":false,
-            "note":"Explicit read-only retained report/output, not termination, rollback or replay authority. Missing output does not prove no effects. Coordinator tracking is unchanged."}),
-        )
+        inspect_result(&self.config_path, &self.node_id, &request.grant_id)
     }
     pub fn grant_receipt(&self, request: ReceiptRequest) -> Result<Value> {
         if request.schema_version != 1 || request.expected_node_id != self.node_id {
             bail!("Invalid grant receipt schema/node")
         }
-        crate::job_commands::validate_operation_id(&request.grant_id)?;
-        let path = journal_path(&self.config_path);
-        // Never create, repair or initialize a database during inspection.
-        let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        db.busy_timeout(Duration::from_millis(200))?;
-        let value =
-            crate::request_receipt::read_consumed(&db, &self.node_id, None, &request.grant_id)?;
-        Ok(
-            json!({"schema_version":1,"report_type":"node_grant_receipt","success":true,"node_id":self.node_id,"grant_id":request.grant_id,
-            "receipt":value,"execution_requested":false,"automatically_retried":false,
-            "note":"Read-only consumed receipt; accepted may be running or interrupted/uncertain. No output or automatic recovery/replay is provided."}),
-        )
+        inspect_consumed(&self.config_path, &self.node_id, &request.grant_id)
     }
+}
+
+fn inspect_result(config: &Path, node: &str, id: &str) -> Result<Value> {
+    let db = open_inspection_journal(config)?;
+    let result = crate::request_result::read_result(&db, node, None, id)?;
+    Ok(
+        json!({"schema_version":1,"report_type":"node_grant_result","success":true,
+        "node_id":node,"grant_id":id,"result":result,
+        "execution_requested":false,"automatically_retried":false,"reconciled":false,
+        "note":"Explicit read-only retained report/output, not termination, rollback or replay authority. Missing output does not prove no effects. Coordinator tracking is unchanged."}),
+    )
+}
+
+fn inspect_consumed(config: &Path, node: &str, id: &str) -> Result<Value> {
+    crate::job_commands::validate_operation_id(id)?;
+    let db = open_inspection_journal(config)?;
+    let receipt = crate::request_receipt::read_consumed(&db, node, None, id)?;
+    Ok(
+        json!({"schema_version":1,"report_type":"node_grant_receipt","success":true,"node_id":node,"grant_id":id,
+        "receipt":receipt,"execution_requested":false,"automatically_retried":false,
+        "note":"Read-only consumed receipt; accepted may be running or interrupted/uncertain. No output or automatic recovery/replay is provided."}),
+    )
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]

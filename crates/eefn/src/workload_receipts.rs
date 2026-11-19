@@ -466,11 +466,7 @@ pub(crate) fn inspect_local_stop_exit(
     id: &str,
 ) -> Result<crate::workload_stop_exit::Report> {
     crate::automation_occurrence::uuid(id)?;
-    let db = Connection::open_with_flags(
-        super::journal_path(config),
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )?;
-    db.busy_timeout(Duration::from_millis(200))?;
+    let db = super::open_inspection_journal(config)?;
     read_stop_exit(&db, node, id, None)
 }
 

@@ -332,6 +332,11 @@ def handle(action, params):
  const offline=await local(executor,['grants','stop-receipt','--id',retainedStop.grant_id]);
  assert.equal(offline.availability,'retained');assert.equal(offline.scope.session_id,retainedStop.session_id);
  assert.equal(offline.read_only,true);assert.equal(offline.stop_requested,false);
+ const consumed=await local(executor,['grants','receipt','--id',retainedStop.grant_id]);
+ assert.equal(consumed.receipt.grant_id,retainedStop.grant_id);assert.equal(consumed.execution_requested,false);
+ const retainedResult=await local(executor,['grants','result','--id',retainedStop.grant_id]);
+ assert.equal(retainedResult.result.receipt.grant_id,retainedStop.grant_id);
+ assert.equal(retainedResult.execution_requested,false);assert.equal(retainedResult.automatically_retried,false);
  assert.deepEqual(await readFile(offlineJournal),offlineBefore);
  const unavailable=await owner(['requests','stop-status',retainedStop.job_id]);
  assert.equal(unavailable.grants[0].availability,'unavailable');assert.equal(unavailable.grants[0].observation,null);

@@ -481,6 +481,50 @@ mod tests {
         recovered.begin(&cfg, "owner", &value, &progress()).unwrap();
         assert_eq!(recovered.get(id).unwrap().unwrap(), receipt);
     }
+
+    #[test]
+    fn offline_grant_commands_leave_pending_download_recovery_to_startup() {
+        use crate::grants::{GrantAction, GrantLedger, journal_path};
+
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("node.json");
+        let value = config(&cfg);
+        let mut journal = Journal::Empty;
+        let pending = journal.begin(&cfg, "owner", &value, &progress()).unwrap();
+        assert_eq!(pending.state, State::Downloading);
+        drop(journal);
+
+        let grant = crate::grants::tests::grant();
+        let grant_db = journal_path(&cfg);
+        let ledger = GrantLedger::open(&grant_db, Default::default(), "owner").unwrap();
+        ledger.claim(&grant).unwrap();
+        ledger
+            .request_stop(&grant, &grant.issuer_id, &grant.session_id, "owner")
+            .unwrap();
+        drop(ledger);
+        let grant_bytes = std::fs::read(&grant_db).unwrap();
+        let download_bytes = std::fs::read(path(&cfg)).unwrap();
+        let id = grant.grant_id;
+        for (command, report_type) in [
+            (
+                GrantAction::Receipt { id: id.clone() },
+                "node_grant_receipt",
+            ),
+            (GrantAction::Result { id: id.clone() }, "node_grant_result"),
+            (GrantAction::StopReceipt { id }, "grant_stop_inspection"),
+        ] {
+            let report = command.inspect_local(&cfg, "owner").unwrap();
+            assert_eq!(report["report_type"], report_type);
+            assert_eq!(report["execution_requested"], false);
+            assert_eq!(std::fs::read(&grant_db).unwrap(), grant_bytes);
+            assert_eq!(std::fs::read(path(&cfg)).unwrap(), download_bytes);
+        }
+        let (recovered, _) = Journal::recover(&cfg, "owner");
+        assert_eq!(
+            recovered.get(&pending.id).unwrap().unwrap().state,
+            State::Interrupted
+        );
+    }
     #[test]
     fn terminal_history_and_latest_sequence_survive_wall_clock_ties() {
         let dir = tempfile::tempdir().unwrap();

@@ -11,7 +11,8 @@ The first command uses the running originating node. The second uses the local
 coordinator owner's command service. Both select the original issuance from the
 existing plan, require its origin/owner authority and ask the exact executor for
 retained evidence. The third reads the executor's local journal without starting
-a node runtime or connecting to a coordinator. Add --json for structured output.
+a node runtime or connecting to a coordinator. Offline grant inspection leaves
+model-download recovery to normal node startup. Add --json for structured output.
 Commands require the original IDs; they do not search or guess another attempt.
 
 The origin and owner commands also support a continuous workload's exact
