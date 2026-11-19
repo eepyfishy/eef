@@ -370,7 +370,7 @@ async fn cancelled_transport_retains_uncertainty_and_releases_only_its_runtime_s
     assert!(task.await.unwrap_err().is_cancelled());
     let g = f.grant(Role::Source);
     assert_eq!(
-        ledger.receipt(&g.issuer_id, &g.grant_id).unwrap()["state"],
+        ledger.wait_for_final_report(&g).await["receipt"]["state"],
         "unknown"
     );
     assert!(engine.peer_slot().is_ok());
@@ -820,7 +820,7 @@ async fn cancelling_native_ready_wait_releases_socket_and_fences_consumed_grant(
     assert!(engine.peer_slot().is_ok());
     let g = f.grant(Role::Destination);
     assert_eq!(
-        ledger.receipt(&g.issuer_id, &g.grant_id).unwrap()["state"],
+        ledger.wait_for_final_report(&g).await["receipt"]["state"],
         "unknown"
     );
     assert!(

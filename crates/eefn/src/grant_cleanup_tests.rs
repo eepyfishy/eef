@@ -18,6 +18,110 @@ impl Drop for Dropped {
         let _ = self.0.send(());
     }
 }
+
+async fn hold_final_journal(
+    ledger: &Arc<GrantLedger>,
+) -> (mpsc::Sender<()>, std::thread::JoinHandle<bool>) {
+    let ledger = ledger.clone();
+    let (release, released) = mpsc::channel();
+    let (locked, ready) = oneshot::channel();
+    let holder = std::thread::spawn(move || {
+        let _journal = ledger.connection.lock().unwrap();
+        let _ = locked.send(());
+        released.recv_timeout(Duration::from_secs(7)).is_ok()
+    });
+    ready.await.unwrap();
+    (release, holder)
+}
+
+#[tokio::test]
+async fn one_shot_finalization_yields_while_storage_is_held_and_late_save_never_replays() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = crate::NodeEngine::new(false, vec![], dir.path().into()).unwrap();
+    let policy = GrantPolicy {
+        max_receipts: 1,
+        ..Default::default()
+    };
+    let ledger = GrantLedger::open(&dir.path().join("receipts.db"), policy, "owner").unwrap();
+    let g = super::tests::grant();
+    let prepare = |grant: &ExecutionGrant| {
+        AcceptedGrant::prepare(
+            grant.clone(),
+            ledger.clone(),
+            &engine,
+            &grant.issuer_id,
+            &grant.session_id,
+            "owner",
+        )
+    };
+    let accepted = prepare(&g).unwrap();
+    let (release, holder) = hold_final_journal(&ledger).await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(4),
+        accepted.run_operation(&engine, async {
+            Ok(json!({"test":"exact retained result"}))
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("completion_checkpoint_unconfirmed")
+    );
+    assert_eq!(result.state, ReceiptState::Unknown);
+    assert!(!result.persisted && !result.success);
+    assert!(result.data.is_null());
+    let other = super::tests::grant();
+    let error = prepare(&other)
+        .err()
+        .expect("Pending save still owns capacity");
+    assert_eq!(denial_code(&error), "grant_finalization_capacity_full");
+    release.send(()).unwrap();
+    assert!(holder.join().unwrap());
+    let retained = ledger.wait_for_final_report(&g).await;
+    assert_eq!(retained["receipt"]["state"], "completed");
+    assert_eq!(
+        retained["report"]["data"],
+        json!({"test":"exact retained result"})
+    );
+    assert!(prepare(&g).is_err());
+    assert!(ledger.receipt(&other.issuer_id, &other.grant_id).is_err());
+}
+
+#[test]
+fn dropped_one_shot_grant_and_runtime_do_not_join_held_storage() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = crate::NodeEngine::new(false, vec![], dir.path().into()).unwrap();
+    let ledger =
+        GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner").unwrap();
+    let g = super::tests::grant();
+    let accepted = AcceptedGrant::prepare(
+        g.clone(),
+        ledger.clone(),
+        &engine,
+        &g.issuer_id,
+        &g.session_id,
+        "owner",
+    )
+    .unwrap();
+    let executor = runtime();
+    let (release, holder) = executor.block_on(hold_final_journal(&ledger));
+    executor.block_on(async move { drop(accepted) });
+    drop(executor);
+    release
+        .send(())
+        .expect("Cancellation must return before held storage");
+    assert!(holder.join().unwrap());
+    let retained = runtime().block_on(ledger.wait_for_final_report(&g));
+    assert_eq!(retained["receipt"]["state"], "unknown");
+    assert_eq!(
+        retained["report"]["error_code"],
+        "grant_runtime_dropped_effects_unknown"
+    );
+    assert!(retained["report"]["data"].is_null());
+    assert!(ledger.claim(&g).is_err());
+}
+
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

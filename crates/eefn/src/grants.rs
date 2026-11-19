@@ -10,8 +10,11 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 
 pub const MAX_DURATION_MS: u64 = 30_000;
+const MAX_GRANT_FINALIZATIONS: usize = 128;
+const GRANT_FINALIZATION_WAIT: Duration = Duration::from_secs(3);
 #[path = "grant_execution_clock.rs"]
 mod execution_clock;
 #[cfg(test)]
@@ -522,7 +525,9 @@ pub struct GrantLedger {
     event_workers: Arc<tokio::sync::Semaphore>,
     final_slots: Arc<tokio::sync::Semaphore>,
     final_reporting_failed: std::sync::atomic::AtomicBool,
-    workload_worker: Mutex<Option<workload_journal_worker::Sender>>,
+    workload_worker: workload_journal_worker::JournalWorker,
+    grant_final_slots: Arc<Semaphore>,
+    grant_final_worker: workload_journal_worker::JournalWorker,
     #[cfg(test)]
     ack_reads_started: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
@@ -694,6 +699,7 @@ impl GrantLedger {
         if crate::pipeline_progress::available(&db)? {
             crate::pipeline_progress::initialize(&db)?;
         }
+        let grant_final_capacity = policy.max_receipts.min(MAX_GRANT_FINALIZATIONS);
         Ok(Arc::new(Self {
             node_id: node_id.into(),
             connection: Mutex::new(db),
@@ -702,7 +708,12 @@ impl GrantLedger {
             event_workers: Arc::new(tokio::sync::Semaphore::new(1)),
             final_slots: Arc::new(tokio::sync::Semaphore::new(1)),
             final_reporting_failed: std::sync::atomic::AtomicBool::new(false),
-            workload_worker: Mutex::new(None),
+            workload_worker: workload_journal_worker::JournalWorker::new("eefn-journal", 2),
+            grant_final_slots: Arc::new(Semaphore::new(grant_final_capacity)),
+            grant_final_worker: workload_journal_worker::JournalWorker::new(
+                "eefn-grant-final",
+                grant_final_capacity,
+            ),
             #[cfg(test)]
             ack_reads_started: Default::default(),
             #[cfg(test)]
@@ -815,6 +826,24 @@ impl GrantLedger {
         }
         Ok(json!(result))
     }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_for_final_report(&self, grant: &ExecutionGrant) -> Value {
+        let digest = definition_digest(&json!(grant)).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let retained = self
+                    .result(&grant.issuer_id, &grant.grant_id, &digest)
+                    .unwrap();
+                if retained["availability"] == "retained_final_report" {
+                    return retained;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Queued grant final report must be retained")
+    }
 }
 pub struct AcceptedGrant {
     grant: ExecutionGrant,
@@ -822,13 +851,13 @@ pub struct AcceptedGrant {
     deadline: Instant,
     accepted: Instant,
     accepted_wall: u64,
-    final_checkpoint_attempted: bool,
+    final_slot: Option<OwnedSemaphorePermit>,
     stop: stop::Watch,
     process_stop: Option<tokio::sync::watch::Sender<bool>>,
 }
 impl Drop for AcceptedGrant {
     fn drop(&mut self) {
-        if !self.final_checkpoint_attempted {
+        if self.final_slot.is_some() {
             // Connection/task cancellation is not remote/backend termination.
             // Retain uncertainty and consumption while releasing unfinished
             // output reservations when possible. No replay or second write
@@ -839,11 +868,33 @@ impl Drop for AcceptedGrant {
                 Value::Null,
                 Some("grant_runtime_dropped_effects_unknown"),
             );
-            let _ = self.ledger.finish(&self.grant, &report);
+            let _ = self.queue_final_report(report);
         }
     }
 }
 impl AcceptedGrant {
+    fn queue_final_report(
+        &mut self,
+        report: GrantReport,
+    ) -> Result<oneshot::Receiver<Option<GrantReport>>> {
+        let slot = self
+            .final_slot
+            .take()
+            .context("Grant finalization already submitted")?;
+        let ledger = self.ledger.clone();
+        let grant = self.grant.clone();
+        let (reply, receiver) = oneshot::channel();
+        self.ledger.grant_final_worker.submit(Box::new(move || {
+            // This job may outlive its waiter. It owns the consumed grant scope,
+            // report and capacity, with no executing operation or lease sender.
+            let saved = ledger.finish(&grant, &report).ok().map(|()| report);
+            drop(ledger);
+            drop(slot);
+            let _ = reply.send(saved);
+        }))?;
+        Ok(receiver)
+    }
+
     /// Aligned-wall-clock adapter is test-only; release builds require an
     /// authenticated fresh lease proof and expose no timestamp fallback.
     #[cfg(test)]
@@ -920,6 +971,11 @@ impl AcceptedGrant {
         engine
             .check_grant_admission(&g)
             .map_err(|_| GrantDenied("local_policy_denied_or_changed"))?;
+        let final_slot = ledger
+            .grant_final_slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| GrantDenied("grant_finalization_capacity_full"))?;
         let accepted = Instant::now();
         // Pair both local clocks before the durable claim. Its I/O consumes
         // the existing lease and a clock jump during it must not be hidden
@@ -934,7 +990,7 @@ impl AcceptedGrant {
             deadline,
             accepted,
             accepted_wall,
-            final_checkpoint_attempted: false,
+            final_slot: Some(final_slot),
             stop,
             process_stop: None,
         })
@@ -1088,16 +1144,21 @@ impl AcceptedGrant {
                 Some("completion_after_deadline"),
             );
         }
-        self.final_checkpoint_attempted = true;
-        if self.ledger.finish(g, &result).is_err() {
-            result = GrantReport::new(
-                g,
-                ReceiptState::Unknown,
-                Value::Null,
-                Some("completion_checkpoint_failed"),
-            );
-            result.persisted = false;
-        }
+        let pending = self.queue_final_report(result);
+        let g = &self.grant;
+        let unconfirmed = |code| {
+            let mut report = GrantReport::new(g, ReceiptState::Unknown, Value::Null, Some(code));
+            report.persisted = false;
+            report
+        };
+        let result = match pending {
+            Ok(receiver) => match tokio::time::timeout(GRANT_FINALIZATION_WAIT, receiver).await {
+                Ok(Ok(Some(saved))) => saved,
+                Ok(_) => unconfirmed("completion_checkpoint_failed"),
+                Err(_) => unconfirmed("completion_checkpoint_unconfirmed"),
+            },
+            Err(_) => unconfirmed("completion_checkpoint_failed"),
+        };
         // Test-only, bounded diagnostics for unexpected pipeline uncertainty.
         // Never emit parameters, paths, model output or node identities. Release
         // builds and their deadline/permission behavior are unchanged.
@@ -1257,16 +1318,8 @@ pub(crate) mod tests {
             "no_final_checkpoint"
         );
         drop(accepted);
-        let unknown: crate::request_result::RetainedResult = serde_json::from_value(
-            ledger
-                .result(
-                    &g.issuer_id,
-                    &g.grant_id,
-                    &definition_digest(&json!(g)).unwrap(),
-                )
-                .unwrap(),
-        )
-        .unwrap();
+        let unknown: crate::request_result::RetainedResult =
+            serde_json::from_value(ledger.wait_for_final_report(&g).await).unwrap();
         assert_eq!(unknown.receipt.state, "unknown");
         assert!(unknown.confirms(&g));
         let report = unknown.report.as_ref().unwrap();

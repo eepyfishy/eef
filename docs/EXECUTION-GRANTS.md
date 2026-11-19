@@ -87,6 +87,31 @@ and uncertain. Disconnect/restart does not revive it or an old lease. Lost repli
 are not evidence that effects did not happen. Inspect a receipt/effect and make an
 explicit recovery decision; never automatically issue fresh work to hide uncertainty.
 
+### Bounded node final reports (development)
+
+Before consuming a one-shot grant, the node reserves one slot for its final
+report. The slot count comes from the existing receipt limit with a ceiling of
+128. A full queue refuses admission before a new receipt or effect. The journal
+still enforces its byte and output reservations. The separate continuous
+workload writer keeps its existing capacity.
+
+The executing future retires before its final report enters the native writer.
+The worker owns only the original grant, its bounded report, the slot and the
+journal. It performs one existing exact-scope write. Dropping a grant before
+submission queues one uncertainty report. Dropping the network waiter after
+submission leaves the original write pending and its capacity charged.
+
+The node waits up to three seconds to observe final persistence. An observation
+timeout returns `completion_checkpoint_unconfirmed` with `persisted: false`
+and no output. An exact retained-result read may subsequently find the saved
+report. Failure to save returns `completion_checkpoint_failed`. Neither reply
+can authorize replay. The operation lease and receipt schemas are unchanged.
+Native persistence frees its slot before notifying an observer.
+
+Held-journal tests exercise a late exact checkpoint, immediate admission denial
+while its slot remains occupied, and nonblocking cancellation and runtime
+shutdown with one retained uncertainty report. Hosted verification is pending.
+
 ## Limits and honest termination
 
 Limits bound the RPC execution future and serialized result, not physical CPU/RAM
