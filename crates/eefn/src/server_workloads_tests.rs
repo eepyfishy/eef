@@ -95,7 +95,8 @@ async fn fixture() -> (NodeServer, Definition, mpsc::Receiver<Value>) {
         info: ConnectionInfo { node_id: "owner".into(), source_ip: "127.0.0.1".into(), source_port: 1, connected_since_ms: now_ms() },
         sender, advertisement: None, last_seen: Instant::now(),
         state: Some(NodeStateSnapshot { registration: json!({"node_id":"owner", "capabilities":[CAPABILITY],
-            "registration_receipt":crate::registration::Offer::new(&runtime).unwrap(), "workload_execution":support(&runtime)}), heartbeat: None }),
+            "registration_receipt":crate::registration::Offer::new(&runtime).unwrap(), "workload_execution":support(&runtime)}), heartbeat: None,
+            heartbeat_received_at: None }),
     });
     (server, d, receiver)
 }

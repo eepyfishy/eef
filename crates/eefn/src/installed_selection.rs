@@ -277,6 +277,7 @@ pub(crate) async fn prepare(
                 context: 4096,
                 cpu_threads: None,
                 job_memory_limit_mib: None,
+                estimated_ram_mib: None,
                 gpu_vram_mb: 0,
                 hints: ModelHints::default(),
             }

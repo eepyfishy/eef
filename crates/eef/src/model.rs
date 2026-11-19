@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use eefn::NodeServer;
@@ -141,6 +141,7 @@ impl RouteQuery {
 struct RegistryState {
     models: BTreeMap<String, Vec<ModelSpec>>,
     loads: HashMap<String, f64>,
+    memory: HashMap<String, (u64, Instant)>,
     request_admission: HashMap<String, eefn::model_lifecycle_policy::RequestAdmission>,
 }
 
@@ -254,6 +255,7 @@ impl ModelRegistry {
             !specs.is_empty()
         });
         state.loads.remove(node_id);
+        state.memory.remove(node_id);
         state.request_admission.remove(node_id);
     }
 
@@ -274,8 +276,30 @@ impl ModelRegistry {
     /// Retain the legacy API parameter for heartbeat collection time.
     /// It supplies no evidence of model speed or network round-trip time.
     pub fn update_metrics(&self, node_id: &str, load: f64, _collection_ms: f64) {
+        self.update_heartbeat(node_id, load, None);
+    }
+
+    pub(crate) fn update_heartbeat(
+        &self,
+        node_id: &str,
+        load: f64,
+        memory: Option<(u64, Instant)>,
+    ) {
         let mut state = self.state.write().expect("model lock");
         state.loads.insert(node_id.into(), load.clamp(0.0, 1.0));
+        if let Some(memory) = memory {
+            state.memory.insert(node_id.into(), memory);
+        } else {
+            state.memory.remove(node_id);
+        }
+    }
+
+    pub(crate) fn clear_memory(&self, node_id: &str) {
+        self.state
+            .write()
+            .expect("model lock")
+            .memory
+            .remove(node_id);
     }
 
     pub fn list(&self) -> Vec<ModelSpec> {
@@ -295,7 +319,7 @@ impl ModelRegistry {
         tiers: &BTreeMap<String, Vec<String>>,
     ) -> Vec<ModelSpec> {
         let state = self.state.read().expect("model lock");
-        Self::matching_routes(&state, request, tiers)
+        Self::matching_routes(&state, request, tiers, Instant::now())
             .into_iter()
             .filter(|spec| !Self::gate_full(&state, &spec.node_id))
             .collect()
@@ -321,7 +345,8 @@ impl ModelRegistry {
         let mut matched = 0;
         let mut full_models = 0;
         let mut full_nodes = std::collections::BTreeSet::new();
-        for spec in Self::matching_routes(&state, request, &Default::default()) {
+        let now = Instant::now();
+        for spec in Self::matching_routes(&state, request, &Default::default(), now) {
             if !connected(&spec.node_id) {
                 continue;
             }
@@ -332,10 +357,18 @@ impl ModelRegistry {
             }
             matched += 1;
             if models.len() < limit {
-                models.push(json!({
+                let mut candidate = json!({
                     "instance":{"node_id":spec.node_id,"backend":spec.backend,"model_id":spec.model_id},
                     "model_metadata":spec.model_metadata,
-                }));
+                });
+                if let Some(hint) = cold_memory_hint(&spec, &state, now) {
+                    candidate["cold_memory_hint"] = json!({
+                        "status": if hint.exceeds_available() { "estimate_exceeds_available" } else { "estimate_fits" },
+                        "estimated_ram_mib": hint.estimated_ram_mib,
+                        "available_bytes": hint.available_bytes,
+                    });
+                }
+                models.push(candidate);
             }
         }
         json!({"candidates":models,"matched_count":matched,"truncated":matched>limit,
@@ -348,8 +381,17 @@ impl ModelRegistry {
         state: &RegistryState,
         request: &ModelRequest,
         tiers: &BTreeMap<String, Vec<String>>,
+        now: Instant,
     ) -> Vec<ModelSpec> {
         let mut chain = Vec::new();
+        let exceeds = |spec: &ModelSpec| {
+            cold_memory_hint(spec, state, now).is_some_and(ColdMemoryHint::exceeds_available)
+        };
+        let compare = |left: &ModelSpec, right: &ModelSpec| {
+            exceeds(left)
+                .cmp(&exceeds(right))
+                .then_with(|| model_score(right, state).total_cmp(&model_score(left, state)))
+        };
         let ids = if let Some(id) = &request.model_id {
             vec![id.clone()]
         } else {
@@ -363,9 +405,7 @@ impl ModelRegistry {
         for id in &ids {
             let mut providers = state.models.get(id).cloned().unwrap_or_default();
             providers.retain(|spec| available(spec, request));
-            providers.sort_by(|left, right| {
-                model_score(right, state).total_cmp(&model_score(left, state))
-            });
+            providers.sort_by(&compare);
             chain.extend(providers);
         }
         if request.model_id.is_none() {
@@ -377,9 +417,7 @@ impl ModelRegistry {
                 .cloned()
                 .collect::<Vec<_>>();
             extra.sort_by(|left, right| {
-                model_score(right, state)
-                    .total_cmp(&model_score(left, state))
-                    .then_with(|| left.model_id.cmp(&right.model_id))
+                compare(left, right).then_with(|| left.model_id.cmp(&right.model_id))
             });
             chain.extend(extra);
         }
@@ -479,6 +517,37 @@ fn model_score(spec: &ModelSpec, state: &RegistryState) -> f64 {
     };
     let load = 1.0 - state.loads.get(&spec.node_id).copied().unwrap_or(0.0);
     warm * 2.0 + load * 0.4
+}
+
+struct ColdMemoryHint {
+    estimated_ram_mib: u64,
+    available_bytes: u64,
+}
+
+impl ColdMemoryHint {
+    fn exceeds_available(self) -> bool {
+        self.estimated_ram_mib > self.available_bytes / (1024 * 1024)
+    }
+}
+
+fn cold_memory_hint(
+    spec: &ModelSpec,
+    state: &RegistryState,
+    now: Instant,
+) -> Option<ColdMemoryHint> {
+    let metadata = spec.model_metadata.as_ref()?;
+    if metadata.lifecycle != Some(eefn::model_metadata::ModelLifecycle::Unloaded) {
+        return None;
+    }
+    let estimated_ram_mib = metadata
+        .resource_estimates
+        .ram_mb
+        .filter(|amount| *amount > 0)?;
+    let &(available_bytes, expires_at) = state.memory.get(&spec.node_id)?;
+    (now < expires_at).then_some(ColdMemoryHint {
+        estimated_ram_mib,
+        available_bytes,
+    })
 }
 
 #[derive(Clone)]
@@ -1248,5 +1317,74 @@ mod tests {
             ..text_request
         };
         assert!(!available(&route[0], &vision_request));
+    }
+
+    #[test]
+    fn fresh_host_memory_demotes_only_cold_routes_with_insufficient_estimated_ram() {
+        let registry = ModelRegistry::default();
+        let mut metadata = eefn::model_metadata::ModelMetadata::from_legacy(Some("text"));
+        metadata.lifecycle = Some(eefn::model_metadata::ModelLifecycle::Unloaded);
+        metadata.resource_estimates.ram_mb = Some(2048);
+        for node in ["quiet", "busy"] {
+            registry
+                .register_remote(
+                    node,
+                    &[json!({"model_id":"shared","backend":"llamacpp","model_metadata":metadata})],
+                )
+                .unwrap();
+        }
+        let available = 2048 * 1024 * 1024u64;
+        let now = Instant::now();
+        registry.update_heartbeat(
+            "quiet",
+            0.1,
+            Some((available - 1, now + Duration::from_secs(60))),
+        );
+        registry.update_heartbeat(
+            "busy",
+            0.8,
+            Some((available, now + Duration::from_secs(60))),
+        );
+        let mut request = text_request();
+        request.model_id = Some("shared".into());
+        let route = |request: &ModelRequest| registry.route(request, &Default::default());
+        assert_eq!(route(&request)[0].node_id, "busy");
+        let preview = registry.preview(&request, |_| true, 8);
+        assert_eq!(
+            preview["candidates"][0]["cold_memory_hint"]["status"],
+            "estimate_fits"
+        );
+        assert_eq!(
+            preview["candidates"][1]["cold_memory_hint"]["status"],
+            "estimate_exceeds_available"
+        );
+        let exact = ModelRequest {
+            constraints: json!({"node_id":"quiet"}),
+            ..request.clone()
+        };
+        assert_eq!(route(&exact)[0].node_id, "quiet");
+
+        registry.update_heartbeat("quiet", 0.1, Some((0, now)));
+        assert_eq!(route(&request)[0].node_id, "quiet");
+        assert!(
+            registry.preview(&request, |_| true, 8)["candidates"][0]
+                .get("cold_memory_hint")
+                .is_none()
+        );
+
+        metadata.lifecycle = Some(eefn::model_metadata::ModelLifecycle::WarmIdle);
+        registry
+            .register_remote(
+                "quiet",
+                &[json!({"model_id":"shared","backend":"llamacpp","model_metadata":metadata})],
+            )
+            .unwrap();
+        registry.update_heartbeat("quiet", 0.1, Some((0, now + Duration::from_secs(60))));
+        assert_eq!(route(&request)[0].node_id, "quiet");
+        assert!(
+            registry.preview(&request, |_| true, 8)["candidates"][0]
+                .get("cold_memory_hint")
+                .is_none()
+        );
     }
 }

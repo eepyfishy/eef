@@ -32,6 +32,9 @@ pub struct ModelSlot {
     /// Windows owned-job committed-memory ceiling; not RAM/working set/VRAM.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_memory_limit_mib: Option<u64>,
+    /// Owner estimate used for placement, separate from process limits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimated_ram_mib: Option<u64>,
     #[serde(default)]
     pub gpu_vram_mb: u64,
     #[serde(
@@ -53,8 +56,14 @@ impl ModelSlot {
     pub fn selection_metadata(&self) -> Result<crate::model_metadata::ModelMetadata> {
         validate_cpu_threads(self.cpu_threads)?;
         crate::model_memory::validate(self.job_memory_limit_mib)?;
-        self.hints
-            .metadata(if self.is_vlm() { "vlm" } else { "text" })
+        if self.estimated_ram_mib == Some(0) {
+            bail!("Estimated RAM must be positive")
+        }
+        let mut metadata = self
+            .hints
+            .metadata(if self.is_vlm() { "vlm" } else { "text" })?;
+        metadata.resource_estimates.ram_mb = self.estimated_ram_mib;
+        Ok(metadata)
     }
     pub fn is_vlm(&self) -> bool {
         self.mmproj_path

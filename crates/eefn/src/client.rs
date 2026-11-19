@@ -658,12 +658,15 @@ impl NodeClient {
                     }
                 };
                 let latency = started.elapsed().as_secs_f64() * 1000.0;
-                let message = build_heartbeat(
+                let mut message = build_heartbeat(
                     &heartbeat_id,
                     &snapshot["load"],
                     latency,
                     &snapshot["specs"],
                 );
+                if let Some(memory) = snapshot.get("memory_availability") {
+                    message["memory_availability"] = memory.clone();
+                }
                 if write_session_frame(
                     &heartbeat_crypto,
                     &heartbeat_writer,
@@ -1289,7 +1292,14 @@ pub(crate) async fn system_snapshot() -> Result<Value> {
     telemetry_worker(|| {
         let mut system = telemetry_system();
         let load = sample_load(&mut system);
-        json!({"specs": specs_for(&system), "load": load})
+        let mut snapshot = json!({"specs": specs_for(&system), "load": load});
+        if let Some(sample) = crate::protocol::MemoryAvailability::sampled(
+            system.total_memory(),
+            system.available_memory(),
+        ) {
+            snapshot["memory_availability"] = json!(sample);
+        }
+        snapshot
     })
     .await
 }

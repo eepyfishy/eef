@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {dirname,join,resolve} from 'node:path';
 import {randomUUID} from 'node:crypto';
+import {totalmem} from 'node:os';
 
 export async function verifyOwnedVisionCommands(f) {
  await verifyScenario(f,'complete');
@@ -39,8 +40,24 @@ async function verifyScenario(f,mode) {
  await writeFile(f.sourcePath,JSON.stringify(config));
  if(mode==='complete')await f.sourceCli(['models','remove','--backend','ollama','--model','fixture-vision']);
  await f.sourceCli(['models','provider','llamacpp']);
+ const estimatedRamMiB=Math.ceil(totalmem()/(1024*1024))*4;
  await f.sourceCli(['models','select-gguf','--model',model,'--file',artifact,'--projector',projector,
-  '--context','1024','--gpu-layers','0','--cpu-threads','2']);
+  '--context','1024','--gpu-layers','0','--cpu-threads','2','--estimated-ram-mib',String(estimatedRamMiB)]);
+ const route=()=>f.owner(['models','route','--capability','vlm.analyze','--node',f.sourceId,'--backend','llamacpp','--model',model]);
+ const exists=path=>readFile(path).then(()=>true,()=>false);
+ if(mode==='complete'){
+  const pending=(await f.sourceCli(['model-lifecycle-policy','show'])).result;
+  await f.sourceCli(['model-lifecycle-policy','--runtime',pending.runtime_id,'set','--expected-digest',pending.saved_digest,'--startup','on-demand']);
+  await f.sourceCli(['restart','--wait-seconds','20']);
+  await f.until(async()=>(await route()).candidates[0]?.cold_memory_hint,'real host RAM observation for the cold model');
+  const preview=await route(),candidate=preview.candidates[0];
+  assert.equal(candidate.model_metadata.lifecycle,'unloaded');
+  assert.equal(candidate.cold_memory_hint.status,'estimate_exceeds_available');
+  assert.equal(candidate.cold_memory_hint.estimated_ram_mib,estimatedRamMiB);
+  assert(Number.isSafeInteger(candidate.cold_memory_hint.available_bytes)&&candidate.cold_memory_hint.available_bytes>=0);
+  assert.equal(await exists(pid),false,'route inspection must keep the cold helper unlaunched');
+  console.log('Cold model RAM placement observation passed: an owner estimate and a fresh host sample reach the public route without loading the model.');
+ }
  const policy=(await f.sourceCli(['model-lifecycle-policy','show'])).result;
  await f.sourceCli(['model-lifecycle-policy','--runtime',policy.runtime_id,'set','--expected-digest',policy.saved_digest,
   '--startup','eager','--idle-unload-seconds','0']);
@@ -52,7 +69,6 @@ async function verifyScenario(f,mode) {
  await f.until(async()=>(await f.json(f.sourceUrl+'/api/diagnostics')).runtime_id!==previous&&
   (await f.json(f.sourceUrl+'/api/status')).connection.state==='connected','owned vision source runtime');
  const runtime=(await f.json(f.sourceUrl+'/api/diagnostics')).runtime_id;
- const route=()=>f.owner(['models','route','--capability','vlm.analyze','--node',f.sourceId,'--backend','llamacpp','--model',model]);
  const applied=(await f.sourceCli(['model-lifecycle-policy','show'])).result;
  assert.equal(applied.applied_policy.max_in_flight_requests,1);
  assert.deepEqual(applied.request_admission,{schema_version:1,limit:1,in_flight:0,available:1,queueing:false,provider_execution_observed:false});
@@ -60,7 +76,8 @@ async function verifyScenario(f,mode) {
  await f.until(async()=>{const m=await current();return m?.owned_pid&&m.active_requests===0&&['ready','warm_idle'].includes(m.state);},'owned vision model ready');
  const original=await current();assert.equal(original.owned_pid,Number(await readFile(pid,'utf8')));
  await f.until(async()=>(await route()).candidates.length===1,'owned model initial route');
- assert.equal((await route()).placement_observation.status,'candidates');
+ const readyRoute=await route();assert.equal(readyRoute.placement_observation.status,'candidates');
+ assert.equal(readyRoute.candidates[0].cold_memory_hint,undefined);
  const inventory=await f.owner(['models','list','--node',f.sourceId]);
  const owned=inventory.nodes[0].models.find(entry=>entry.instance.model_id===model&&entry.instance.backend==='llamacpp');
  const load=owned.last_successful_owned_load;
@@ -73,7 +90,6 @@ async function verifyScenario(f,mode) {
  assert.deepEqual(Object.keys(load).sort(),['elapsed_ms','generation','kind','peak_job_commit_bytes_at_ready','schema_version']);
  const passive=await f.sourceCli(['workloads','vision-sources']);assert.equal(passive.configuration_ready,true);
  assert.equal(passive.capture_started,false);assert.equal(passive.model_contacted,false);
- const exists=path=>readFile(path).then(()=>true,()=>false);
  assert.equal(await exists(requests),false);assert.equal(await exists(join(trace,'pids.json')),false);
  const operation=randomUUID();
  const submitted=await f.originCli(['requests','submit-vision','--source-node',f.sourceId,'--camera','camera',

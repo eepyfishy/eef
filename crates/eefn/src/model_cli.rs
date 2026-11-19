@@ -70,6 +70,9 @@ pub enum ModelsAction {
         context: u32,
         #[arg(long, value_parser = clap::value_parser!(u16).range(1..=256))]
         cpu_threads: Option<u16>,
+        /// Estimated RAM required for cold placement in MiB.
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        estimated_ram_mib: Option<u64>,
         #[arg(long = "capability")]
         capabilities: Vec<String>,
         #[arg(long = "role")]
@@ -188,6 +191,7 @@ impl ModelsAction {
                 gpu_layers,
                 context,
                 cpu_threads,
+                estimated_ram_mib,
                 capabilities,
                 roles,
             } => ModelCommand::SelectGguf {
@@ -200,6 +204,7 @@ impl ModelsAction {
                     context: *context,
                     cpu_threads: *cpu_threads,
                     job_memory_limit_mib: None,
+                    estimated_ram_mib: *estimated_ram_mib,
                     gpu_vram_mb: 0,
                     hints: hints(capabilities, roles),
                 },
@@ -491,6 +496,7 @@ mod tests {
             gpu_layers: 0,
             context: 4096,
             cpu_threads: None,
+            estimated_ram_mib: Some(512),
             capabilities: vec![],
             roles: vec![],
         };
@@ -499,6 +505,10 @@ mod tests {
         };
         assert_eq!(slot.model_path, path);
         assert_eq!(slot.mmproj_path, Some(path));
+        assert_eq!(
+            slot.selection_metadata().unwrap().resource_estimates.ram_mb,
+            Some(512)
+        );
         assert!(action.to_command(true).is_err());
     }
 }

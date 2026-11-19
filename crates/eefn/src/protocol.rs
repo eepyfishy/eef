@@ -9,6 +9,34 @@ use crate::NodeCrypto;
 pub const PROTOCOL_VERSION: u64 = 1;
 pub const MAX_WIRE_LINE: usize = 8 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryAvailability {
+    pub schema_version: u32,
+    pub total_bytes: u64,
+    pub available_bytes: u64,
+}
+
+impl MemoryAvailability {
+    pub(crate) fn sampled(total_bytes: u64, available_bytes: u64) -> Option<Self> {
+        let sample = Self {
+            schema_version: 1,
+            total_bytes,
+            available_bytes,
+        };
+        sample.valid().then_some(sample)
+    }
+
+    pub fn from_value(raw: &Value) -> Option<Self> {
+        let sample: Self = serde::Deserialize::deserialize(raw).ok()?;
+        sample.valid().then_some(sample)
+    }
+
+    fn valid(&self) -> bool {
+        self.schema_version == 1 && self.total_bytes > 0 && self.available_bytes <= self.total_bytes
+    }
+}
+
 pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

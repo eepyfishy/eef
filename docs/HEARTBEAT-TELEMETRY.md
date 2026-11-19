@@ -46,6 +46,30 @@ apply. Measured link latency and model startup-cost scheduling remain open.
 The regressions use equal candidates with conflicting load and collection time.
 Hosted verification is pending.
 
+## Available host RAM and placement (development)
+
+The existing CPU/RAM sample now reports optional `memory_availability` with
+total and OS-available physical memory in bytes. A missing or invalid sample is
+unknown. These measurements come from the same system refresh as the legacy
+load ratios. The gateway records the sample's monotonic arrival on its registered
+session. A refresh, disconnect, expired freshness window or invalid replacement
+cannot extend the older observation.
+
+Set an advisory estimate when selecting a local GGUF using
+`eefn models select-gguf --model ID --file PATH --estimated-ram-mib MIB`.
+Apply the selection with the existing explicit restart. Placement compares that
+estimate with a fresh host sample for an unloaded model and ranks a reported
+shortfall behind other eligible candidates within the existing model preference
+order. Exact selection remains available for the owner to try under the usual
+admission policy. `eef models route --capability llm.infer --json` can expose the
+comparison as `cold_memory_hint` without loading the model.
+
+Missing estimates, missing or stale observations and resident models keep
+ordinary placement. The comparison uses host RAM and does not reserve memory,
+infer VRAM, waive local limits or transfer execution authority. Full scheduling
+by startup cost and measured throughput remains open. Hosted verification is
+pending.
+
 ## Verification scope
 
 Focused tests check an empty process inventory before and after CPU/RAM sampling,

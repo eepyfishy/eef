@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use eefn::firmware::FirmwareConfig;
@@ -259,7 +259,7 @@ impl Runtime {
         report["role"] = json!(query.role);
         report["execution_authorized"] = json!(false);
         report["note"] = json!(
-            "Current connected registry candidates in existing load/latency order. Full managed-exchange gate counts are node-reported snapshots, not provider execution or measured resources. Missing capacity hints remain unknown. No execution grant or model reservation; state may change before dispatch. No work was loaded, queued or retried."
+            "Current connected registry candidates in placement order. Cold-model memory hints compare an estimate with the latest host observation and reserve no resources. Managed-exchange gate counts describe node admission snapshots. Missing observations remain unknown. This read starts no work."
         );
         Ok(report)
     }
@@ -449,8 +449,12 @@ impl Runtime {
                     }
                     Ok(NodeEvent::Heartbeat(message)) => {
                         if let Some(id) = message["node_id"].as_str() {
-                            if let Some(heartbeat) = runtime.node_server.node_heartbeat(id).await {
-                                runtime.on_node_heartbeat(heartbeat, true).await;
+                            if let Some((heartbeat, received)) =
+                                runtime.node_server.timed_node_heartbeat(id).await
+                            {
+                                runtime
+                                    .on_node_heartbeat(heartbeat, Some(received), true)
+                                    .await;
                             }
                         }
                     }
@@ -496,11 +500,20 @@ impl Runtime {
         snapshot: eefn::server::NodeStateSnapshot,
         publish_registration: bool,
     ) {
+        if snapshot.heartbeat.is_none()
+            && let Some(node_id) = snapshot.registration["node_id"].as_str()
+        {
+            self.model_registry.clear_memory(node_id);
+        }
         self.on_node_register(snapshot.registration, publish_registration)
             .await;
         if let Some(heartbeat) = snapshot.heartbeat {
-            self.on_node_heartbeat(heartbeat, publish_registration)
-                .await;
+            self.on_node_heartbeat(
+                heartbeat,
+                snapshot.heartbeat_received_at,
+                publish_registration,
+            )
+            .await;
         }
     }
 
@@ -617,7 +630,7 @@ impl Runtime {
         }
     }
 
-    async fn on_node_heartbeat(&self, message: Value, publish: bool) {
+    async fn on_node_heartbeat(&self, message: Value, received: Option<Instant>, publish: bool) {
         let Some(node_id) = message
             .get("node_id")
             .and_then(Value::as_str)
@@ -643,8 +656,20 @@ impl Runtime {
             specs,
             message["gateway_received_ms"].as_u64().unwrap_or(0),
         );
+        let memory = received
+            .zip(
+                message
+                    .get("memory_availability")
+                    .and_then(eefn::protocol::MemoryAvailability::from_value),
+            )
+            .map(|(received, sample)| {
+                (
+                    sample.available_bytes,
+                    received + Duration::from_secs(self.node_freshness_seconds()),
+                )
+            });
         self.model_registry
-            .update_metrics(node_id, combined, collection_ms);
+            .update_heartbeat(node_id, combined, memory);
         self.publish_or_observe_node(
             "node.updated",
             json!({"node_id": node_id, "load": combined, "latency_ms": collection_ms}),
@@ -1449,6 +1474,7 @@ mod tests {
                 "gateway_received_ms":received}),
             heartbeat: Some(json!({"node_id":"fixture","gateway_received_ms":received+1,
                 "load":{"cpu":0.3},"latency_ms":5})),
+            heartbeat_received_at: None,
         };
         for _ in 0..3 {
             runtime.apply_node_state(snapshot.clone(), false).await;
@@ -1470,6 +1496,7 @@ mod tests {
         runtime
             .on_node_heartbeat(
                 json!({"node_id":"fixture","gateway_received_ms":eefn::protocol::now_ms()}),
+                None,
                 false,
             )
             .await;

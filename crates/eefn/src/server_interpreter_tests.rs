@@ -39,6 +39,7 @@ async fn fixture() -> NodeServer {
             state: Some(NodeStateSnapshot {
                 registration,
                 heartbeat: None,
+                heartbeat_received_at: None,
             }),
             last_seen: Instant::now(),
         },

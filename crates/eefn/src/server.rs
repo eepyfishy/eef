@@ -70,6 +70,7 @@ pub struct ConnectionCounts {
 pub struct NodeStateSnapshot {
     pub registration: Value,
     pub heartbeat: Option<Value>,
+    pub heartbeat_received_at: Option<Instant>,
 }
 
 #[derive(Clone, Debug)]
@@ -370,15 +371,16 @@ impl NodeServer {
 
     /// Heartbeats need only metrics, without cloning/revalidating all models.
     pub async fn node_heartbeat(&self, node_id: &str) -> Option<Value> {
-        self.inner
-            .connections
-            .read()
+        self.timed_node_heartbeat(node_id)
             .await
-            .get(node_id)?
-            .state
-            .as_ref()?
-            .heartbeat
-            .clone()
+            .map(|(heartbeat, _)| heartbeat)
+    }
+
+    /// Return the gateway's monotonic arrival time with the exact sample.
+    pub async fn timed_node_heartbeat(&self, node_id: &str) -> Option<(Value, Instant)> {
+        let connections = self.inner.connections.read().await;
+        let state = connections.get(node_id)?.state.as_ref()?;
+        state.heartbeat.clone().zip(state.heartbeat_received_at)
     }
 
     pub async fn node_states(&self) -> std::collections::BTreeMap<String, NodeStateSnapshot> {
@@ -1757,6 +1759,7 @@ impl NodeServer {
                             // Old specs/metrics must not overwrite a refreshed
                             // registration until this generation has a heartbeat.
                             heartbeat: None,
+                            heartbeat_received_at: None,
                         });
                         connection.last_seen = Instant::now();
                     }
@@ -1784,21 +1787,38 @@ impl NodeServer {
                         bail!("register before sending heartbeats")
                     }
                     let received_at_ms = now_ms();
+                    let received_at = Instant::now();
                     message["gateway_received_ms"] = json!(received_at_ms);
+                    if let Some(raw) = message.get("memory_availability")
+                        && crate::protocol::MemoryAvailability::from_value(raw).is_none()
+                    {
+                        message
+                            .as_object_mut()
+                            .expect("heartbeat object")
+                            .remove("memory_availability");
+                    }
                     if let Some(connection) = self
                         .inner
                         .connections
                         .write()
                         .await
                         .get_mut(authenticated_id)
+                        .filter(|connection| connection.session_id == session_id)
                     {
                         connection.last_seen = Instant::now();
                         if let Some(state) = &mut connection.state {
                             state.heartbeat = Some(state_fields(
                                 &message,
-                                &["node_id", "load", "latency_ms", "specs"],
+                                &[
+                                    "node_id",
+                                    "load",
+                                    "latency_ms",
+                                    "specs",
+                                    "memory_availability",
+                                ],
                                 received_at_ms,
                             ));
+                            state.heartbeat_received_at = Some(received_at);
                         }
                     }
                     message["node_id"] = Value::String(authenticated_id.into());
@@ -4068,6 +4088,7 @@ mod tests {
             c.state = Some(NodeStateSnapshot {
                 registration: json!({"execution_grants":{"schema_version":1,"available":true,"timing_mode":crate::grant_time::MODE}}),
                 heartbeat: None,
+                heartbeat_received_at: None,
             });
         }
         let wire = Uuid::new_v4().simple().to_string();
@@ -4207,11 +4228,12 @@ mod tests {
             "unregistered sessions are excluded"
         );
         assert!(server.node_state("owner").await.is_none());
+        let memory = json!({"schema_version":1,"total_bytes":8192,"available_bytes":4096});
         let mut wire = Vec::new();
         for value in [
             json!({"type":"register","node_id":"owner","capabilities":["system.info"],"name":"First","psk":"PRIVATE-PSK","gateway_received_ms":1,
                 "metadata":{"resources":[{"id":"info","capability":"system.info","parameters":{"password":"PRIVATE-BINDING"}}]}}),
-            json!({"type":"heartbeat","node_id":"owner","load":{"cpu":0.2},"latency_ms":8,"command":"PRIVATE-COMMAND","gateway_received_ms":u64::MAX}),
+            json!({"type":"heartbeat","node_id":"owner","load":{"cpu":0.2},"latency_ms":8,"command":"PRIVATE-COMMAND","gateway_received_ms":u64::MAX,"memory_availability":memory}),
         ] {
             write_message(server.inner.crypto.as_ref().unwrap(), &mut wire, &value)
                 .await
@@ -4228,6 +4250,10 @@ mod tests {
         let old = server.node_state("owner").await.unwrap();
         assert_eq!(old.registration["name"], "First");
         assert_eq!(old.heartbeat.as_ref().unwrap()["load"]["cpu"], 0.2);
+        let (observed, received_at) = server.timed_node_heartbeat("owner").await.unwrap();
+        assert_eq!(received_at, old.heartbeat_received_at.unwrap());
+        assert!(received_at <= Instant::now());
+        assert_eq!(observed["memory_availability"], memory);
         let registration_time = old.registration["gateway_received_ms"].as_u64().unwrap();
         let heartbeat_time = old.heartbeat.as_ref().unwrap()["gateway_received_ms"]
             .as_u64()
@@ -4238,7 +4264,7 @@ mod tests {
         let mut wire = Vec::new();
         for value in [
             json!({"type":"register","node_id":"owner","capabilities":[],"name":"Second"}),
-            json!({"type":"heartbeat","node_id":"owner","load":{"cpu":0.8},"latency_ms":3}),
+            json!({"type":"heartbeat","node_id":"owner","load":{"cpu":0.8},"latency_ms":3,"memory_availability":{"schema_version":1,"total_bytes":8192,"available_bytes":8193}}),
         ] {
             write_message(server.inner.crypto.as_ref().unwrap(), &mut wire, &value)
                 .await
@@ -4260,7 +4286,10 @@ mod tests {
             old.heartbeat.as_ref().unwrap()["gateway_received_ms"],
             heartbeat_time
         );
-        assert_eq!(latest.heartbeat.unwrap()["load"]["cpu"], 0.8);
+        assert!(latest.heartbeat_received_at.unwrap() >= received_at);
+        let latest_heartbeat = latest.heartbeat.unwrap();
+        assert_eq!(latest_heartbeat["load"]["cpu"], 0.8);
+        assert!(latest_heartbeat.get("memory_availability").is_none());
         assert_eq!(
             old.registration["name"], "First",
             "previous snapshots never mutate"
