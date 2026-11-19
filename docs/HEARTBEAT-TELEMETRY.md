@@ -72,8 +72,12 @@ infer VRAM, waive local limits or transfer execution authority. The separate
 has a narrower scope than end-to-end scheduling by measured workload cost.
 Source `6eb80d5` passed the public cold-RAM preview and all 37 Windows native
 suites. Two separate continuous-source workspace tests timed out while observing
-journal checkpoints, leaving the combined validation gate open.
+journal checkpoints, leaving that revision's combined validation gate open.
 [Hosted run 44477923007](https://github.com/eepyfishy/eef/actions/runs/44477923007)
+
+The subsequent duration-routing revision `94847dd` passed all four jobs,
+including the public cold-RAM preview and the continuous-source tests in that
+run. [Hosted run 44480368827](https://github.com/eepyfishy/eef/actions/runs/44480368827)
 
 ## Verification scope
 

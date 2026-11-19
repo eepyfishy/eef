@@ -3,6 +3,26 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: model placement and workload authoring
+
+Source `94847dd` passed all four jobs. Windows/headless passed 1,893 Rust
+tests with one ignored across 18 groups and all 37 native suites. The command
+fixtures confirm fresh cold-RAM hints, owned startup and vision decode
+observations, and a read-only duration estimate. Full workload timing still
+requires real models and physical nodes.
+[Duration and placement evidence](https://github.com/eepyfishy/eef/actions/runs/44480368827)
+
+Sources `2354103` and `21fc617` each passed the same four-job matrix with 1,894
+Windows/headless Rust tests, one ignored, and all 37 then-required native suites.
+This covers per-model idle policy in the workspace tests and the typed authoring
+overlap regression. The separate lifecycle-policy command fixture was outside
+those 37 suites and is now required by the hosted workflow. The intermediate
+`aed8c1f` run failed one Windows workspace case after it retained interrupted
+microphone work without a stop acknowledgement. Loaded continuous stop remains
+open. [Idle policy workspace](https://github.com/eepyfishy/eef/actions/runs/44482371651)
+· [Authoring workspace](https://github.com/eepyfishy/eef/actions/runs/44484142705)
+· [Intermediate failure](https://github.com/eepyfishy/eef/actions/runs/44483282539)
+
 ## In development: final reports and owned-model startup observations
 
 Source `ae3d324` passes all four jobs in

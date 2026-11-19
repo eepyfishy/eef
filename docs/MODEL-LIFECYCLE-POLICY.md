@@ -199,7 +199,10 @@ unloads. The timer rechecks the selected model's generation, idle interval and
 active inference pins when reserving it, then uses existing owned-process
 termination. The operation applies only to owned GGUF models. Empty overrides
 are omitted to preserve older configurations and their policy digests.
-Hosted verification is pending.
+The per-model workspace tests passed on all four jobs at `2354103`. That run's
+native suite omitted the lifecycle-policy command fixture. The hosted suite now
+requires it. Command acceptance remains pending.
+[Workspace evidence](https://github.com/eepyfishy/eef/actions/runs/44482371651)
 
 ### Interpreter sampling preferences (unreleased)
 

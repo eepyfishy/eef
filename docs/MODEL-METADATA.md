@@ -89,7 +89,9 @@ time excludes startup, prompt processing and transport. The inventory retains
 the last sample per operation within
 the current runtime, including across unloads. A shared Ollama backend has no
 owned slot or generation, so this field does not describe its performance.
-Inventory inspection starts no work. Hosted verification is pending.
+Inventory inspection starts no work. The public inventory showed bounded vision
+timing alongside the original result contract in the synthetic command fixture
+at `94847dd`. [Hosted run 44480368827](https://github.com/eepyfishy/eef/actions/runs/44480368827)
 
 ### Owned-model duration hints (development)
 
@@ -111,8 +113,10 @@ estimate even when the group lacks comparable evidence.
 These historical samples exclude prompt processing, network transport and
 queueing. Model IDs are owner-selected labels. Use the estimate as a placement
 hint within the existing model and permission scope. It reserves no capacity,
-sets no deadline, and cannot change execution admission. Hosted verification
-of duration placement is pending.
+sets no deadline, and cannot change execution admission. Source `94847dd`
+passed the four-job matrix. The focused test covers competing providers and the
+public command fixture covers the estimate without an exchange reservation.
+[Hosted run 44480368827](https://github.com/eepyfishy/eef/actions/runs/44480368827)
 
 <a id="busy-placement-hints-under-verification"></a>
 

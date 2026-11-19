@@ -81,7 +81,12 @@ New typed microphone and camera requests use the authenticated source selection
 for initial review. Compilation checks disclosure and the exact live source
 again after saving the review. Coordinator warnings under
 `eef::workload_authoring` identify the failed phase and retained job ID without
-including request text or source bindings. Hosted verification is pending.
+including request text or source bindings. The overlapping-submission regression
+and full hosted matrix passed at `21fc617`. The prior `aed8c1f` run retained an
+interrupted microphone workload without a stop acknowledgement in one Windows
+workspace test. Loaded continuous stop remains open.
+[Passing run](https://github.com/eepyfishy/eef/actions/runs/44484142705) ·
+[Earlier failure](https://github.com/eepyfishy/eef/actions/runs/44483282539)
 
 To explicitly finish a saved concrete review after inspecting it, use its exact
 review revision:

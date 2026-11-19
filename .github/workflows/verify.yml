@@ -166,6 +166,7 @@ jobs:
             'test-model-activation.mjs',
             'test-model-bootstrap.mjs',
             'test-model-metadata.mjs',
+            'test-model-lifecycle-policy.mjs',
             'test-node-output.mjs',
             'test-request-review.mjs',
             'test-request-input.mjs',
