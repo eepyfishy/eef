@@ -424,6 +424,10 @@ impl NodeClient {
         message["workload_receipts"] = json!(crate::workload_inspection::Advertisement::new(
             self.grant_ledger.is_some() && self.tls_config.is_some()
         ));
+        message[crate::workload_stop_exit::REGISTRATION_FIELD] =
+            json!(crate::workload_stop_exit::Advertisement::new(
+                self.grant_ledger.is_some() && self.tls_config.is_some()
+            ));
         message["workload_vision_results"] =
             json!(crate::vision_result_inspection::Advertisement::new(
                 self.grant_ledger.is_some() && self.tls_config.is_some()
@@ -866,7 +870,10 @@ impl NodeClient {
                 .await?;
                 continue;
             }
-            if message["type"] == "workload_receipt" || message["type"] == "workload_analyses" {
+            if matches!(
+                message["type"].as_str(),
+                Some("workload_receipt" | "workload_analyses" | crate::workload_stop_exit::KIND)
+            ) {
                 Box::pin(self.dispatch_workload_inspection(
                     message,
                     &writer,

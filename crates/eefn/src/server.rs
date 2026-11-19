@@ -944,6 +944,25 @@ impl NodeServer {
         }
         Ok(result)
     }
+
+    /// Read only the exit evidence for the original continuous workload.
+    pub async fn inspect_workload_stop_exit(
+        &self,
+        scope: &crate::grants::stop::Scope,
+    ) -> Result<crate::workload_stop_exit::Report> {
+        scope.validate()?;
+        let response = self.invoke_message(&scope.executor_node,
+            json!({"type":crate::workload_stop_exit::KIND, "scope":scope, "expected_node_id":scope.executor_node,"expected_issuer_id":scope.issuer_id}),
+            Duration::from_secs(5), None, None, None).await?;
+        ensure!(
+            response["success"] == true,
+            "Continuous stop exit evidence unavailable"
+        );
+        let report: crate::workload_stop_exit::Report =
+            serde_json::from_value(response["data"].clone())?;
+        report.validate(scope)?;
+        Ok(report)
+    }
     /// Older sessions/issuers and missing or mismatched receipts never imply effects did not occur.
     pub async fn inspect_grant_receipt(
         &self,
@@ -1073,6 +1092,7 @@ impl NodeServer {
             || message["type"] == "inspect_grant_stop"
             || message["type"] == "workload_receipt"
             || message["type"] == "workload_analyses"
+            || message["type"] == crate::workload_stop_exit::KIND
         {
             self.check_grant_connection(&connection)?;
             if message["type"] == "workload_analyses" {
@@ -1106,18 +1126,30 @@ impl NodeServer {
                     .fingerprint()?;
                 wire.validate(&issuer, node_id)?;
             }
-            if message["type"] == "workload_receipt" {
-                let support: crate::workload_inspection::Advertisement = serde_json::from_value(
-                    connection
-                        .state
-                        .as_ref()
-                        .context("Workload inspection registration unavailable")?
-                        .registration["workload_receipts"]
-                        .clone(),
-                )?;
-                support.validate()?;
-                if !support.available {
-                    bail!("Node does not advertise workload inspection; no fallback")
+            if message["type"] == "workload_receipt"
+                || message["type"] == crate::workload_stop_exit::KIND
+            {
+                let registration = &connection
+                    .state
+                    .as_ref()
+                    .context("Workload inspection registration unavailable")?
+                    .registration;
+                if message["type"] == crate::workload_stop_exit::KIND {
+                    let support = registration
+                        .get(crate::workload_stop_exit::REGISTRATION_FIELD)
+                        .context(crate::workload_stop_exit::Unsupported)?;
+                    let support: crate::workload_stop_exit::Advertisement =
+                        serde_json::from_value(support.clone())?;
+                    support.validate()?;
+                    ensure!(support.available, crate::workload_stop_exit::Unsupported);
+                } else {
+                    let support: crate::workload_inspection::Advertisement =
+                        serde_json::from_value(registration["workload_receipts"].clone())?;
+                    support.validate()?;
+                    ensure!(
+                        support.available,
+                        "Node does not advertise workload inspection; no fallback"
+                    );
                 }
                 let scope: crate::grants::stop::Scope =
                     serde_json::from_value(message["scope"].clone())?;
@@ -1211,6 +1243,7 @@ impl NodeServer {
                 || message["type"] == "inspect_grant_stop"
                 || message["type"] == "workload_receipt"
                 || message["type"] == "workload_analyses"
+                || message["type"] == crate::workload_stop_exit::KIND
             {
                 message.as_object_mut().unwrap().remove("expected_node_id");
                 message
@@ -1725,6 +1758,16 @@ impl NodeServer {
                             bail!("Stop inspection requires grant support")
                         }
                     }
+                    if let Some(value) = message.get(crate::workload_stop_exit::REGISTRATION_FIELD)
+                    {
+                        let support: crate::workload_stop_exit::Advertisement =
+                            serde_json::from_value(value.clone())?;
+                        support.validate()?;
+                        ensure!(
+                            !support.available || message["execution_grants"]["available"] == true,
+                            "Continuous stop exit inspection requires grant support"
+                        );
+                    }
                     let advertisement = crate::network::PeerRecord::from_registration(&message)?;
                     if let Some(value) = message.get("workload_receipts") {
                         let support: crate::workload_inspection::Advertisement =
@@ -1840,6 +1883,7 @@ impl NodeServer {
                                     "grant_stop",
                                     "grant_stop_read",
                                     "workload_receipts",
+                                    crate::workload_stop_exit::REGISTRATION_FIELD,
                                     "workload_vision_results",
                                     "workload_execution",
                                     "workload_vision_execution",

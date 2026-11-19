@@ -11,12 +11,17 @@ impl NodeClient {
         issuer: Option<&str>,
     ) -> Result<()> {
         let request_id = message["id"].as_str().unwrap_or("").to_owned();
-        let parsed = if message["type"] == "workload_analyses" {
-            serde_json::from_value::<crate::vision_result_inspection::WireRequest>(message)
-                .map(Inspection::Analyses)
-        } else {
-            serde_json::from_value::<crate::workload_inspection::WireRequest>(message)
-                .map(Inspection::Receipt)
+        let parsed = match message["type"].as_str() {
+            Some("workload_analyses") => {
+                serde_json::from_value::<crate::vision_result_inspection::WireRequest>(message)
+                    .map(Inspection::Analyses)
+            }
+            Some(crate::workload_stop_exit::KIND) => {
+                serde_json::from_value::<crate::workload_inspection::WireRequest>(message)
+                    .map(Inspection::StopExit)
+            }
+            _ => serde_json::from_value::<crate::workload_inspection::WireRequest>(message)
+                .map(Inspection::Receipt),
         };
         let prepared = match (
             parsed,
@@ -61,18 +66,24 @@ impl NodeClient {
 enum Inspection {
     Receipt(crate::workload_inspection::WireRequest),
     Analyses(crate::vision_result_inspection::WireRequest),
+    StopExit(crate::workload_inspection::WireRequest),
 }
 impl Inspection {
     fn validate(&self, issuer: &str, node: &str) -> Result<()> {
         match self {
             Self::Receipt(r) => r.validate(issuer, node),
             Self::Analyses(r) => r.validate(issuer, node),
+            Self::StopExit(r) => r.validate_kind(crate::workload_stop_exit::KIND, issuer, node),
         }
     }
     fn read(&self, ledger: &crate::grants::GrantLedger, issuer: &str, node: &str) -> Result<Value> {
         match self {
             Self::Receipt(r) => Ok(json!(r.read(ledger, issuer, node)?)),
             Self::Analyses(r) => Ok(json!(r.read(ledger, issuer, node)?)),
+            Self::StopExit(r) => {
+                r.validate_kind(crate::workload_stop_exit::KIND, issuer, node)?;
+                Ok(json!(ledger.inspect_workload_stop_exit(&r.scope)?))
+            }
         }
     }
 }

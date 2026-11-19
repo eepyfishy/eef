@@ -125,5 +125,6 @@ The optional record can be missing when capture never started, cleanup could
 not be observed, the task or runtime was dropped, or storage was unavailable.
 The cleanup wait begins after live authority retires and uses the existing
 three-second observation budget. Ordinary completion and policy-only revocation
-do not produce this record. This path is internal to the retained node reader.
-Command access and physical validation remain open.
+do not produce this record. Origin and owner clients can inspect the evidence
+through [stop-status](PROCESS-STOP-OBSERVATION.md) when the original node supports
+the read. Physical validation remains open.

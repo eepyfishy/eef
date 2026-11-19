@@ -41,14 +41,14 @@ pub(crate) struct WireRequest {
 }
 impl WireRequest {
     pub fn validate(&self, issuer: &str, node: &str) -> Result<()> {
+        self.validate_kind("workload_receipt", issuer, node)
+    }
+    pub(crate) fn validate_kind(&self, kind: &str, issuer: &str, node: &str) -> Result<()> {
         crate::request_drafts::validate_id(&self.id)?;
         self.scope.validate()?;
         // Historical scope.session_id is evidence only. The current authenticated
         // channel independently pins issuer/node and correlates the response.
-        if self.kind != "workload_receipt"
-            || self.scope.issuer_id != issuer
-            || self.scope.executor_node != node
-        {
+        if self.kind != kind || self.scope.issuer_id != issuer || self.scope.executor_node != node {
             bail!("Workload inspection requires the original pinned issuer and exact node")
         }
         Ok(())

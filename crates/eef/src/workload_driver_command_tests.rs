@@ -89,6 +89,10 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
         registration["grant_stop"] = json!(eefn::grants::stop::Advertisement::new(true));
         registration["grant_stop_read"] =
             json!(eefn::grants::stop::inspection::Advertisement::new(true));
+        if mode == "lost_stop_reply" {
+            registration["workload_stop_exit_read"] =
+                json!({"schema_version":1,"available":true,"read_only":true});
+        }
         registration["workload_execution"] = json!(Advertisement {
             schema_version: 2,
             available: true,
@@ -326,6 +330,29 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
                         .await
                         .unwrap();
                     }
+                    Some("workload_stop_exit") => {
+                        assert_eq!(mode, "lost_stop_reply");
+                        assert_eq!(stops.load(Ordering::SeqCst), 1);
+                        let scope = definition.as_ref().unwrap().scope().unwrap();
+                        assert_eq!(message["scope"], json!(scope));
+                        assert!(message.get("expected_issuer_id").is_none());
+                        assert!(message.get("expected_node_id").is_none());
+                        let at = now_ms().max(1);
+                        let result = json!({
+                            "schema_version":1,"report_type":"workload_stop_exit",
+                            "scope":scope,"stop_recorded_at_ms":at,"read_only":true,
+                            "observation":{"schema_version":1,"kind":"owned_process_tree_empty_after_stop_request",
+                                "mode":"windows_owned_job","observed_at_ms":at,"stop_requested":true,
+                                "owned_process_tree_empty":true,"external_effects_stopped":false,"finished_actions_undone":false}
+                        });
+                        write_message(
+                            &crypto,
+                            &mut output,
+                            &success_response(message["id"].as_str().unwrap(), result),
+                        )
+                        .await
+                        .unwrap();
+                    }
                     _ => panic!("Unexpected peer frame type"),
                 }
             }
@@ -498,21 +525,30 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
         }
         if matches!(mode, "stop" | "lost_stop_reply") {
             let context = final_plan.goal.request_context.as_ref().unwrap();
+            let query = eefn::process_stop_status::Command {
+                id: approved.plan_id.clone(),
+            };
+            assert!(runtime
+                .inspect_process_stop_status(query.clone(), Some("other-origin"))
+                .await
+                .is_err());
             let status = runtime
-                .inspect_process_stop_status(
-                    eefn::process_stop_status::Command {
-                        id: approved.plan_id.clone(),
-                    },
-                    Some(context.origin_node()),
-                )
+                .inspect_process_stop_status(query, Some(context.origin_node()))
                 .await
                 .unwrap();
             assert_eq!(status["stop_requested"], true);
             assert_eq!(status["issued_attempts"], 1);
-            assert_eq!(status["not_inspected_issued_attempts"], 1);
-            assert_eq!(status["grants"], json!([]));
             assert_eq!(status["external_effects_stopped"], false);
             assert_eq!(status["revision"], final_plan.revision);
+            if mode == "stop" {
+                assert_eq!(status["not_inspected_issued_attempts"], 1);
+                assert_eq!(status["grants"], json!([]));
+            } else {
+                assert_eq!(status["not_inspected_issued_attempts"], 0);
+                assert_eq!(status["grants"][0]["availability"], "owned_process_tree_empty");
+                assert_eq!(status["grants"][0]["intent_recorded"], true);
+                assert_eq!(stopped.load(Ordering::SeqCst), 1);
+            }
         }
         let reused: Value = client
             .post(format!("http://{address}/api/commands/requests/execute"))

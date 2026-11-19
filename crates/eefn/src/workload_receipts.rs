@@ -429,6 +429,39 @@ impl Drop for Consumption {
     }
 }
 impl GrantLedger {
+    pub(crate) fn inspect_workload_stop_exit(
+        &self,
+        scope: &stop::Scope,
+    ) -> Result<crate::workload_stop_exit::Report> {
+        scope.validate()?;
+        let db = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Grant journal unavailable"))?;
+        let tx = db.unchecked_transaction()?;
+        let receipt = read_core(&tx, &self.node_id, Some(&scope.issuer_id), &scope.grant_id)?;
+        ensure!(
+            receipt.definition.scope()? == *scope,
+            "Retained workload differs from stop exit query"
+        );
+        let intent = stop::read(&tx, &scope.grant_id)?;
+        ensure!(
+            intent.as_ref().is_none_or(|r| r.confirms_scope(scope)),
+            "Retained stop intent differs from the exact issuance"
+        );
+        let report = crate::workload_stop_exit::Report {
+            schema_version: 1,
+            report_type: crate::workload_stop_exit::KIND.into(),
+            scope: scope.clone(),
+            stop_recorded_at_ms: intent.map(|r| r.recorded_at_ms),
+            observation: stop_observation::read(&tx, &receipt)?,
+            read_only: true,
+        };
+        report.validate(scope)?;
+        tx.commit()?;
+        Ok(report)
+    }
+
     #[cfg(test)]
     pub(crate) fn workload_reporting_ready(&self) -> bool {
         self.final_slots.available_permits() == 1

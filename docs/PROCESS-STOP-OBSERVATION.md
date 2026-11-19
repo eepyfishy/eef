@@ -49,17 +49,21 @@ unsuccessfully after the stop notification; its report uses `completed`,
 output, marks it truncated/discarded, and retains only bounded exit/observation
 metadata. This is not successful work or authority to dispatch dependencies.
 
-Status requires both original retained stop intent and the matching persisted
-execution report. It returns minimal typed metadata, not prompts, program
-arguments, stdout/stderr, model input or media. Its coverage counts explicitly
+For a one-shot grant, status requires both original retained stop intent and the
+matching persisted execution report. Status returns only typed process metadata.
+Its coverage counts explicitly
 identify issued attempts not inspected; observing one tree never proves every
 job/network effect stopped. The coordinator's tracking revision is a snapshot
 and stays unchanged even if final node evidence now exists.
 
-Continuous workloads count as issued attempts outside this command's process
-observation coverage. Use the original grant ID with
-[stop-receipt](STOP-INSPECTION.md) to read a continuous workload's retained stop
-intent.
+For a continuous workload, status reads the node's separately retained owned
+capture exit evidence for the original stop target. The node must advertise the
+read-only `workload_stop_exit_read` control. The response has the original scope,
+optional recorded stop time and optional process observation. A matching pinned
+issuer can inspect it after reconnect. Older nodes count as issued attempts
+outside this command's coverage. Use [stop-receipt](STOP-INSPECTION.md) for the
+separate intent record. A process observation leaves coordinator tracking and
+the interrupted workload's unknown outcome unchanged.
 
 Late/unconfirmed cleanup, policy or clock loss, abandoned execution futures,
 failed checkpoints and expired leases remain uncertain. Stopping before the

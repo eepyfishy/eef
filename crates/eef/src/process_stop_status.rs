@@ -101,7 +101,7 @@ impl Runtime {
                 observation: None,
             })
         };
-        let grants = match targets.as_slice() {
+        let mut grants = match targets.as_slice() {
             [] => vec![],
             [one] => vec![inspect(one.clone()).await?],
             [one, two] => {
@@ -110,6 +110,48 @@ impl Runtime {
             }
             _ => unreachable!(),
         };
+        if let Some(workload) = plan.execution.as_ref().and_then(|e| e.workload.as_ref())
+            && let Some(delivery) = &workload.stop
+        {
+            crate::request_execution::validate_retained(&plan)?;
+            let scope = workload.definition.scope()?;
+            let report = if Instant::now() < deadline {
+                tokio::time::timeout_at(
+                    deadline,
+                    self.node_server.inspect_workload_stop_exit(&scope),
+                )
+                .await
+                .ok()
+            } else {
+                None
+            };
+            match report {
+                Some(Ok(report))
+                    if Instant::now() < deadline
+                        && delivery.report.as_ref().is_none_or(|saved| {
+                            Some(saved.recorded_at_ms) == report.stop_recorded_at_ms
+                        }) =>
+                {
+                    grants.push(GrantStatus {
+                        scope,
+                        availability: if report.observation.is_some() {
+                            Availability::OwnedProcessTreeEmpty
+                        } else {
+                            Availability::Unconfirmed
+                        },
+                        intent_recorded: report.stop_recorded_at_ms.is_some(),
+                        observation: report.observation,
+                    });
+                }
+                Some(Err(error)) if error.is::<eefn::workload_stop_exit::Unsupported>() => {}
+                _ => grants.push(GrantStatus {
+                    scope,
+                    availability: Availability::Unavailable,
+                    intent_recorded: false,
+                    observation: None,
+                }),
+            }
+        }
         let report = Report {
             schema_version: 1,
             report_type: "job_process_stop_status".into(),

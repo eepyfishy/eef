@@ -694,6 +694,33 @@ async fn full_source_cases(kind: FullSourceKind) {
             })
             .await
             .unwrap();
+            if mode == "stop" {
+                let status = service
+                    .job_command(eefn::job_commands::JobRequest {
+                        schema_version: 1,
+                        expected_node_id: "origin".into(),
+                        operation_id: None,
+                        command: eefn::job_commands::JobCommand::StopStatus {
+                            id: stopped.plan_id.clone(),
+                        },
+                    })
+                    .await
+                    .unwrap();
+                let data = &status["data"];
+                assert_eq!(status["success"], true);
+                assert_eq!(data["revision"], stopped.revision);
+                assert_eq!(
+                    data["grants"][0]["scope"],
+                    json!(w.definition.scope().unwrap())
+                );
+                assert_eq!(data["grants"][0]["availability"], "owned_process_tree_empty");
+                assert_eq!(
+                    data["grants"][0]["observation"]["external_effects_stopped"],
+                    false
+                );
+                assert_eq!(data["stop_signal_sent"], false);
+                assert_eq!(data["reconciled"], false);
+            }
             // Existing owned-capture cleanup observes for at most three seconds.
             // Wait independently before a NEW explicit job proves source reuse.
             tokio::time::sleep(Duration::from_secs(5)).await;
