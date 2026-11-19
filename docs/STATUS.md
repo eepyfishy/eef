@@ -5,6 +5,25 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+Source `1528fcf` passes all four hosted jobs in
+[run 44438746327](https://github.com/eepyfishy/eef/actions/runs/44438746327).
+Windows/headless passed 1,886 Rust tests across 18 groups with one ignored and
+all 37 native suites. The raw log confirms the public camera and microphone
+stop cases with real descendant process handles and synthetic capture providers.
+Origin and owner status agree on the original grant and session. The executor
+cannot read that status as another origin. The preceding driver `a60e934`
+passes its own exact-source audit and all four jobs in
+[run 44437458182](https://github.com/eepyfishy/eef/actions/runs/44437458182),
+including the held root/descendant checks and reservation reuse. The original
+v1 stop receipt still confirms intent only. See the [scoped stop evidence](PROCESS-STOP-OBSERVATION.md#one-shot-camera-and-microphone-capture-development).
+
+Source `5976d3d` passes all four hosted jobs in
+[run 44436626483](https://github.com/eepyfishy/eef/actions/runs/44436626483):
+1,884 Windows/headless Rust tests across 18 groups with one ignored, all 37
+native suites and retained additional gates. Exact-source and raw-log review
+accepts the bounded initial journal read in `stop-status`. The original
+snapshot and executor reads share its five-second observation budget.
+
 Source `d0b379c` passes all four hosted jobs in
 [run 44435420551](https://github.com/eepyfishy/eef/actions/runs/44435420551).
 Windows/headless passed 1,883 Rust tests across 18 groups with one ignored, all

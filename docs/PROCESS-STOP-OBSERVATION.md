@@ -34,6 +34,12 @@ cannot be read, the command reports an error. Late or unavailable executor
 evidence is marked unavailable. Historical reads still require the same pinned
 issuer and node. The command uses the original grant scope after reconnect.
 
+Source `5976d3d` passed all four jobs in
+[run 44436626483](https://github.com/eepyfishy/eef/actions/runs/44436626483).
+Windows/headless passed 1,884 Rust tests across 18 groups with one ignored,
+all 37 native suites and the retained additional gates. The new held-journal
+case checks the bounded read through the public stop-status command service.
+
 ## What is retained and displayed
 
 A confirmed native observation is retained in the original normal execution
@@ -79,9 +85,20 @@ matching JSON field from a plugin cannot create that result. The observation
 covers the owned processes. Device buffers and external effects remain
 unconfirmed. The original stop-intent receipt remains unchanged.
 
-Hosted verification is pending. The new Windows fixture uses synthetic camera
-and microphone plugins and observes real root and child process handles. It
-also checks that the node can accept another capture once the first job exits.
+Source `a60e934` passed all four jobs in
+[run 44437458182](https://github.com/eepyfishy/eef/actions/runs/44437458182).
+Windows/headless passed 1,886 Rust tests across 18 groups with one ignored,
+all 37 native suites and the retained additional gates. The node fixture uses
+synthetic camera and microphone plugins, holds real root and child process
+handles, and confirms that the capture reservation is reusable after exit.
+
+The public command follow-up `1528fcf` passed the same counts and all four jobs in
+[run 44438746327](https://github.com/eepyfishy/eef/actions/runs/44438746327).
+Two separately paired logical nodes check `jobs stop`, matching read-only origin
+and owner status, denied inspection by the executor as another origin, and
+unchanged journal bytes on reads. The fixture observes both owned descendants
+and checks that the retained report carries only the scoped process observation.
+Physical devices, external effects and broader continuous stop remain open.
 
 The common capability dispatcher returns a boxed future before selecting a
 provider. This keeps unused providers' state out of its callers' stack frames;
