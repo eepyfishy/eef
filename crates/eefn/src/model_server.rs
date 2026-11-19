@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex as SyncMutex};
 use std::time::Duration;
 
 use crate::model_metadata::{
-    ModelAvailability, ModelLifecycle, OwnedModelLoad, OwnedModelLoadKind,
+    ModelAvailability, ModelLifecycle, OwnedModelDecode, OwnedModelLoad, OwnedModelLoadKind,
 };
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -1164,6 +1164,7 @@ struct SlotResidency {
     control: Option<String>,
     idle_since: Option<tokio::time::Instant>,
     last_successful_owned_load: Option<OwnedModelLoad>,
+    last_successful_owned_decode: Option<OwnedModelDecode>,
 }
 struct Residency {
     closed: bool,
@@ -1174,6 +1175,46 @@ pub(crate) struct ModelUse<'a> {
     server: &'a ModelServer,
     model: String,
     generation: u64,
+}
+impl ModelUse<'_> {
+    pub(crate) fn observe_decode(
+        &self,
+        vision: bool,
+        response: &Value,
+        result: &Value,
+        max_tokens: u64,
+        exchange_time: Duration,
+    ) {
+        let Some(sample) = crate::model_response::owned_decode_sample(
+            response,
+            result,
+            self.generation,
+            max_tokens,
+            exchange_time,
+        ) else {
+            return;
+        };
+        let mut gate = self.server.residency.lock().unwrap();
+        if !gate.closed
+            && let Some(slot) = gate.slots.get_mut(&self.model)
+            && slot.generation == self.generation
+            && slot.active > 0
+        {
+            let observed = slot
+                .last_successful_owned_decode
+                .get_or_insert(OwnedModelDecode {
+                    schema_version: 1,
+                    text: None,
+                    vision: None,
+                });
+            if vision {
+                observed.vision = Some(sample);
+            } else {
+                observed.text = Some(sample);
+            }
+        }
+        // The existing pin drop publishes the new residency snapshot.
+    }
 }
 impl Drop for ModelUse<'_> {
     fn drop(&mut self) {
@@ -1327,6 +1368,7 @@ impl ModelServer {
                             control: None,
                             idle_since: None,
                             last_successful_owned_load: None,
+                            last_successful_owned_decode: None,
                         },
                     )
                     .is_some()
@@ -2365,6 +2407,10 @@ impl ModelServer {
                 advertised["model_metadata"] = json!(metadata);
                 if let Some(sample) = residency.and_then(|state| state.last_successful_owned_load) {
                     advertised["last_successful_owned_load"] = json!(sample);
+                }
+                if let Some(sample) = residency.and_then(|state| state.last_successful_owned_decode)
+                {
+                    advertised["last_successful_owned_decode"] = json!(sample);
                 }
                 Ok(advertised)
             })

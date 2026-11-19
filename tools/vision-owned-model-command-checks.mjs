@@ -80,6 +80,7 @@ async function verifyScenario(f,mode) {
  assert.equal(readyRoute.candidates[0].cold_memory_hint,undefined);
  const inventory=await f.owner(['models','list','--node',f.sourceId]);
  const owned=inventory.nodes[0].models.find(entry=>entry.instance.model_id===model&&entry.instance.backend==='llamacpp');
+ assert.equal(owned.last_successful_owned_decode,undefined);
  const load=owned.last_successful_owned_load;
  assert.equal(load.schema_version,1);
  assert.equal(load.kind,'eager_group');
@@ -138,6 +139,11 @@ async function verifyScenario(f,mode) {
   assert.equal((await current()).active_requests,0);
   await f.until(async()=>(await route()).candidates.length===1,'completed owned model restores placement hint');
   assert.equal((await route()).placement_observation.status,'candidates');
+  const decode=async()=>(await f.owner(['models','list','--node',f.sourceId])).nodes[0].models
+   .find(entry=>entry.instance.model_id===model&&entry.instance.backend==='llamacpp')?.last_successful_owned_decode;
+  await f.until(decode,'completed owned reply publishes decode timing');
+  assert.deepEqual(await decode(),{schema_version:1,vision:{generation:original.generation,generated_tokens:4,decode_time_us:2500}});
+  console.log('Owned model decode inventory observation passed: bounded vision timing stayed separate from the retained analysis text.');
  } else {
   assert.equal(saved.workload.state,'unknown');
   assert.equal(result.result.report_type,'coordinator_workload_uncertain_result');

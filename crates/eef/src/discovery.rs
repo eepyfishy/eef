@@ -560,6 +560,7 @@ mod tests {
                     cpu_threads: None,
                     job_memory_limit_mib: None,
                     last_successful_owned_load: None,
+                    last_successful_owned_decode: None,
                     model_id: "m".repeat(256),
                     backend: Some("b".repeat(64)),
                     modality: Some("v".repeat(64)),

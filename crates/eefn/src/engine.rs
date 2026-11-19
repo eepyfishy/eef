@@ -1676,7 +1676,13 @@ impl NodeEngine {
                 bail!("This capability is not enabled for the selected local model")
             }
             return self
-                .llamacpp(server, &params, schema, interpreter_sampling)
+                .llamacpp(
+                    server,
+                    capability == "vlm.analyze",
+                    &params,
+                    schema,
+                    interpreter_sampling,
+                )
                 .await;
         }
         if backend == Some("llamacpp") {
@@ -2072,13 +2078,14 @@ impl NodeEngine {
     async fn llamacpp(
         &self,
         server: &ModelServer,
+        vision: bool,
         params: &Value,
         schema: Option<Value>,
         sampling: Option<&crate::interpreter_sampling::InterpreterSampling>,
     ) -> Result<Value> {
         let _request_slot = self.reserve_model_request()?;
         let model = params.get("model").and_then(Value::as_str);
-        let _use_pin = match server.pin(model) {
+        let model_pin = match server.pin(model) {
             Ok(pin) => pin,
             Err(_) => {
                 self.service
@@ -2095,6 +2102,7 @@ impl NodeEngine {
         if let Some(sampling) = sampling {
             Self::apply_interpreter_sampling(&mut payload, sampling, false);
         }
+        let started = std::time::Instant::now();
         let response = self
             .http
             .post(format!("{base}/v1/chat/completions"))
@@ -2105,7 +2113,13 @@ impl NodeEngine {
             .send()
             .await?
             .error_for_status()?;
-        crate::model_response::chat(response, crate::model_selection::Backend::Llamacpp).await
+        let response = crate::model_manager::bounded_json(response).await?;
+        let result =
+            crate::model_response::normalize(&response, crate::model_selection::Backend::Llamacpp)?;
+        if let Some(max_tokens) = payload["max_tokens"].as_u64() {
+            model_pin.observe_decode(vision, &response, &result, max_tokens, started.elapsed());
+        }
+        Ok(result)
     }
 
     fn llamacpp_payload(&self, params: &Value, schema: Option<Value>) -> Value {

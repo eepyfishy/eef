@@ -66,6 +66,33 @@ pub(crate) async fn chat(response: reqwest::Response, backend: Backend) -> Resul
     normalize(&response, backend)
 }
 
+pub(crate) fn owned_decode_sample(
+    raw: &Value,
+    result: &Value,
+    generation: u64,
+    max_tokens: u64,
+    exchange_time: std::time::Duration,
+) -> Option<crate::model_metadata::OwnedDecodeSample> {
+    if result["completion_complete"] != true || result["content"].as_str()?.trim().is_empty() {
+        return None;
+    }
+    let generated_tokens = u32::try_from(raw.pointer("/timings/predicted_n")?.as_u64()?).ok()?;
+    let reported_us = raw.pointer("/timings/predicted_ms")?.as_f64()? * 1000.0;
+    if u64::from(generated_tokens) > max_tokens
+        || !reported_us.is_finite()
+        || reported_us <= 0.0
+        || reported_us > exchange_time.as_micros() as f64 + 1.0
+    {
+        return None;
+    }
+    let sample = crate::model_metadata::OwnedDecodeSample {
+        generation,
+        generated_tokens,
+        decode_time_us: reported_us.round() as u64,
+    };
+    sample.valid().then_some(sample)
+}
+
 pub(crate) fn normalize(response: &Value, backend: Backend) -> Result<Value> {
     if response.get("error").is_some_and(|value| !value.is_null()) {
         bail!("model backend reported an inference error");
@@ -140,6 +167,39 @@ pub(crate) fn normalize(response: &Value, backend: Backend) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owned_decode_requires_a_bounded_completed_exchange_without_changing_output() {
+        let raw = json!({"choices":[{"message":{"content":"answer"},"finish_reason":"stop"}],
+            "timings":{"predicted_n":4,"predicted_ms":2.5,"provider_private":"PRIVATE"}});
+        let result = normalize(&raw, Backend::Llamacpp).unwrap();
+        assert_eq!(
+            result,
+            json!({"content":"answer","finish_reason":"stop","completion_complete":true})
+        );
+        let sample = |response: &Value, result: &Value, limit, millis| {
+            owned_decode_sample(
+                response,
+                result,
+                3,
+                limit,
+                std::time::Duration::from_millis(millis),
+            )
+        };
+        assert_eq!(
+            serde_json::to_value(sample(&raw, &result, 4, 3).unwrap()).unwrap(),
+            json!({"generation":3,"generated_tokens":4,"decode_time_us":2500})
+        );
+        assert!(sample(&raw, &result, 3, 3).is_none());
+        assert!(sample(&raw, &result, 4, 2).is_none());
+        let mut partial = result.clone();
+        partial["completion_complete"] = json!(false);
+        assert!(sample(&raw, &partial, 4, 3).is_none());
+        let mut malformed = raw;
+        malformed["timings"]["predicted_n"] = json!(0);
+        assert!(sample(&malformed, &result, 4, 3).is_none());
+    }
+
     #[test]
     fn incomplete_categories_never_promote_reasoning_or_echo_provider_diagnostics() {
         for backend in [Backend::Ollama, Backend::Llamacpp] {

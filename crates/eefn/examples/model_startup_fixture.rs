@@ -86,7 +86,8 @@ async fn main() -> anyhow::Result<()> {
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
                 if vision["exit_after_release"] == true {std::process::exit(27);}
-                return Json(json!({"choices":[{"message":{"content":"movement detected"},"finish_reason":"stop"}]}));
+                return Json(json!({"choices":[{"message":{"content":"movement detected"},"finish_reason":"stop"}],
+                    "timings":{"predicted_n":4,"predicted_ms":2.5}}));
             }
             let prompt = request["messages"].as_array().and_then(|v|v.last()).and_then(|v|v["content"].as_str());
             if prompt==Some("fixture-gate") {

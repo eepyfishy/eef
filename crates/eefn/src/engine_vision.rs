@@ -264,7 +264,7 @@ impl LocalBinding<'_> {
             self.installed().await?;
             self.current(granted, deadline, &authorized)?;
             let model = Some(self.selection.model_id.as_str());
-            let _pin = if self.selection.backend == Backend::Llamacpp {
+            let model_pin = if self.selection.backend == Backend::Llamacpp {
                 let server = self
                     .engine
                     .model_server
@@ -294,6 +294,7 @@ impl LocalBinding<'_> {
                 ),
             };
             self.current(granted, deadline, &authorized)?;
+            let started = Instant::now();
             let response = self
                 .client
                 .post(self.base.join(path)?)
@@ -301,6 +302,7 @@ impl LocalBinding<'_> {
                 .send()
                 .await?;
             let response = bounded_response(response, limits.max_response_bytes).await?;
+            let exchange_time = started.elapsed();
             let result = crate::model_response::normalize(&response, self.selection.backend)?;
             ensure!(
                 result["completion_complete"] == true,
@@ -318,6 +320,15 @@ impl LocalBinding<'_> {
             self.current(granted, deadline, &authorized)?;
             self.installed().await?;
             self.current(granted, deadline, &authorized)?;
+            if let Some(pin) = model_pin {
+                pin.observe_decode(
+                    true,
+                    &response,
+                    &result,
+                    u64::from(limits.max_tokens),
+                    exchange_time,
+                );
+            }
             Ok(text.to_owned())
         };
         // Provider diagnostics, URL errors and partial text never leave this

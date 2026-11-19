@@ -69,6 +69,25 @@ history for inspection. Model rank and admission do not depend on it. Compared
 startup, inference throughput and resource headroom still need verification
 before measured placement can use them. Hosted verification is pending.
 
+### Observed owned-model decoding (development)
+
+`last_successful_owned_decode` exposes the most recent compatible text and vision
+timing samples separately for an owned llama.cpp slot. Each sample includes the
+runtime generation, generated token count and reported decode time in
+microseconds. The node reads the backend's generated-token and decode-duration
+fields only after a completed nonempty reply, within the request's token budget
+and observed exchange time. The vision workload also verifies the final local
+authority and result limits. [Bundled llama.cpp server API](https://github.com/ggml-org/llama.cpp/blob/b10621/tools/server/README.md)
+
+The sample excludes prompts, images, generated text and provider diagnostics.
+Incomplete, missing, malformed and incompatible timing remain unknown. Decode
+time excludes startup, prompt processing and transport. The inventory retains
+the last sample per operation within
+the current runtime, including across unloads. A shared Ollama backend has no
+owned slot or generation, so this field does not describe its performance.
+Inventory inspection starts no work. Hosted verification and use in duration
+estimates remain open.
+
 <a id="busy-placement-hints-under-verification"></a>
 
 ### Busy placement hints (unreleased)

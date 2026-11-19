@@ -58,6 +58,9 @@ fn model(node_id: &str, entry: &PeerModel) -> Value {
     if let Some(sample) = entry.last_successful_owned_load {
         value["last_successful_owned_load"] = json!(sample);
     }
+    if let Some(sample) = entry.last_successful_owned_decode {
+        value["last_successful_owned_decode"] = json!(sample);
+    }
     value
 }
 
@@ -199,9 +202,12 @@ mod tests {
     }
 
     #[test]
-    fn inventory_projects_only_valid_owned_load_observations() {
+    fn inventory_projects_only_valid_owned_startup_and_decode_observations() {
         let sample = json!({"schema_version":1,"kind":"single_slot","generation":3,
             "elapsed_ms":290,"peak_job_commit_bytes_at_ready":8192});
+        let decode = json!({"schema_version":1,"text":{"generation":3,"generated_tokens":4,"decode_time_us":2500}});
+        let mut invalid_decode = decode.clone();
+        invalid_decode["text"]["decode_time_us"] = json!(0);
         let mut private = sample.clone();
         private["path"] = json!("PRIVATE-PATH");
         let mut future = sample.clone();
@@ -209,11 +215,11 @@ mod tests {
         let mut oversized = sample.clone();
         oversized["elapsed_ms"] = json!(3_600_001);
         let peer = PeerRecord::from_registration(&json!({"node_id":"owner","models":[
-            {"model_id":"good","backend":"llamacpp","modality":"text","last_successful_owned_load":sample},
-            {"model_id":"private","backend":"llamacpp","modality":"text","last_successful_owned_load":private},
+            {"model_id":"good","backend":"llamacpp","modality":"text","last_successful_owned_load":sample,"last_successful_owned_decode":decode},
+            {"model_id":"private","backend":"llamacpp","modality":"text","last_successful_owned_load":private,"last_successful_owned_decode":invalid_decode},
             {"model_id":"future","backend":"llamacpp","modality":"text","last_successful_owned_load":future},
             {"model_id":"oversized","backend":"llamacpp","modality":"text","last_successful_owned_load":oversized},
-            {"model_id":"external","backend":"ollama","modality":"text","last_successful_owned_load":sample}
+            {"model_id":"external","backend":"ollama","modality":"text","last_successful_owned_load":sample,"last_successful_owned_decode":decode}
         ]})).unwrap();
         let report = page(vec![(peer, Duration::ZERO)], 30, &query()).unwrap();
         let models = report["nodes"][0]["models"].as_array().unwrap();
@@ -222,9 +228,11 @@ mod tests {
             assert_eq!(model["capabilities"], json!(["llm.infer"]));
             if model["instance"]["model_id"] == "good" {
                 assert_eq!(model["last_successful_owned_load"], sample);
+                assert_eq!(model["last_successful_owned_decode"], decode);
                 assert!(model["resource_estimates"]["ram_mb"].is_null());
             } else {
                 assert!(model.get("last_successful_owned_load").is_none());
+                assert!(model.get("last_successful_owned_decode").is_none());
             }
         }
         assert!(!report.to_string().contains("PRIVATE-PATH"));
@@ -256,6 +264,7 @@ mod tests {
             cpu_threads: None,
             job_memory_limit_mib: None,
             last_successful_owned_load: None,
+            last_successful_owned_decode: None,
             model_id: "unknown".into(),
             backend: None,
             modality: None,
@@ -287,6 +296,7 @@ mod tests {
                     cpu_threads: None,
                     job_memory_limit_mib: None,
                     last_successful_owned_load: None,
+                    last_successful_owned_decode: None,
                     model_id: format!("{j:03}{}", "x".repeat(250)),
                     backend: Some("b".repeat(64)),
                     modality: Some("vlm".into()),

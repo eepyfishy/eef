@@ -83,6 +83,46 @@ impl OwnedModelLoad {
     }
 }
 
+const MAX_DECODE_TIME_US: u64 = 3_600_000_000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnedDecodeSample {
+    pub generation: u64,
+    pub generated_tokens: u32,
+    pub decode_time_us: u64,
+}
+
+impl OwnedDecodeSample {
+    pub(crate) fn valid(&self) -> bool {
+        self.generation > 0
+            && self.generated_tokens > 0
+            && (1..=MAX_DECODE_TIME_US).contains(&self.decode_time_us)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnedModelDecode {
+    pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<OwnedDecodeSample>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision: Option<OwnedDecodeSample>,
+}
+
+impl OwnedModelDecode {
+    pub(crate) fn valid(&self) -> bool {
+        self.schema_version == 1
+            && (self.text.is_some() || self.vision.is_some())
+            && self
+                .text
+                .iter()
+                .chain(&self.vision)
+                .all(OwnedDecodeSample::valid)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceEstimates {
