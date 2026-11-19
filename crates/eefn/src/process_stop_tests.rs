@@ -140,11 +140,44 @@ async fn private_control_close_is_not_a_stop_but_an_already_signalled_close_is()
         .unwrap();
 }
 #[test]
-fn only_direct_windows_process_grants_get_a_private_control() {
+fn supported_direct_windows_grants_get_a_private_control() {
     let mut grant = grant();
     assert_eq!(control(&grant).is_some(), cfg!(windows));
     for cap in ["pipeline.run", "llm.infer", "peer.transfer", "system.ping"] {
         grant.capability = cap.into();
         assert!(control(&grant).is_none());
     }
+    for (cap, action) in [("audio.capture", "record"), ("camera.capture", "capture")] {
+        grant.capability = cap.into();
+        grant.action = action.into();
+        assert_eq!(control(&grant).is_some(), cfg!(windows));
+        grant.action = "run".into();
+        assert!(control(&grant).is_none());
+    }
+}
+
+#[test]
+fn capture_stop_requires_exact_failed_metadata_without_plugin_output() {
+    let mut grant = grant();
+    grant.capability = "camera.capture".into();
+    grant.action = "capture".into();
+    grant.params = json!({});
+    let stop = stop_report(&grant);
+    let data = json!({"process_stop_observation": observation()});
+    let good = GrantReport::new(
+        &grant,
+        ReceiptState::Completed,
+        data.clone(),
+        Some(CAPTURE_STOPPED),
+    );
+    assert!(good.confirms(&grant));
+    assert_eq!(confirmed(&grant, &stop, &good), Some(observation()));
+    let plugin_reply = GrantReport::new(&grant, ReceiptState::Completed, data, None);
+    assert!(confirmed(&grant, &stop, &plugin_reply).is_none());
+    let mut forged = good.clone();
+    forged.data["image"] = json!("output must not be attached to a stop observation");
+    assert!(!forged.confirms(&grant));
+    let mut forged = good;
+    forged.data["process_stop_observation"]["external_effects_stopped"] = json!(true);
+    assert!(!forged.confirms(&grant));
 }

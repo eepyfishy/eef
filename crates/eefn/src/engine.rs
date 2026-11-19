@@ -1141,6 +1141,7 @@ impl NodeEngine {
                         python_output_limit.unwrap_or(runtime.limits().max_stdout_bytes),
                         execution_deadline,
                         reservation,
+                        process_stop,
                     )
                     .await
             }

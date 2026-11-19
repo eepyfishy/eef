@@ -3,6 +3,56 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub(crate) const CAPTURE_STOPPED: &str = "capture_owned_processes_stopped";
+
+fn capture_action(grant: &crate::grants::ExecutionGrant) -> bool {
+    matches!(
+        (grant.capability.as_str(), grant.action.as_str()),
+        ("camera.capture", "capture") | ("audio.capture", "record")
+    )
+}
+
+pub fn supports_observation(grant: &crate::grants::ExecutionGrant) -> bool {
+    (grant.capability == "process.exec" && grant.action == "run") || capture_action(grant)
+}
+
+// Produced by Rust after observing the job. Plugin output cannot construct it.
+#[derive(Debug, thiserror::Error)]
+#[error("Owned capture process exit observed after stop")]
+pub(crate) struct CaptureStopped(Observation);
+impl CaptureStopped {
+    #[cfg(windows)]
+    pub(crate) fn observed(_exit: crate::process_lifetime::ObservedExit) -> Self {
+        Self(Observation::observed())
+    }
+
+    pub(crate) fn report(
+        &self,
+        grant: &crate::grants::ExecutionGrant,
+    ) -> crate::grants::GrantReport {
+        use crate::grants::{GrantReport, ReceiptState};
+        GrantReport::new(
+            grant,
+            ReceiptState::Completed,
+            serde_json::json!({"process_stop_observation": self.0}),
+            Some(CAPTURE_STOPPED),
+        )
+    }
+}
+
+pub(crate) fn capture_observation(
+    grant: &crate::grants::ExecutionGrant,
+    data: &Value,
+) -> Option<Observation> {
+    if !capture_action(grant) || data.as_object()?.len() != 1 {
+        return None;
+    }
+    let observation: Observation =
+        serde_json::from_value(data.get("process_stop_observation")?.clone()).ok()?;
+    observation.validate().ok()?;
+    Some(observation)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Observation {
@@ -62,13 +112,21 @@ fn from_result(
     grant: &crate::grants::ExecutionGrant,
     result: &crate::grants::GrantReport,
 ) -> Option<Observation> {
-    if grant.capability != "process.exec"
-        || grant.action != "run"
+    if !supports_observation(grant)
         || !result.confirms(grant)
         || result.state != crate::grants::ReceiptState::Completed
         || !result.persisted
         || result.success
-        || result.error_code.as_deref() != Some("process_exit_unsuccessful")
+    {
+        return None;
+    }
+    if capture_action(grant) {
+        if result.error_code.as_deref() != Some(CAPTURE_STOPPED) {
+            return None;
+        }
+        return capture_observation(grant, &result.data);
+    }
+    if result.error_code.as_deref() != Some("process_exit_unsuccessful")
         || result.data.get("success") != Some(&Value::Bool(false))
     {
         return None;
@@ -96,7 +154,7 @@ pub(crate) struct Control(pub(crate) tokio::sync::watch::Receiver<bool>);
 pub(crate) fn control(
     grant: &crate::grants::ExecutionGrant,
 ) -> Option<(tokio::sync::watch::Sender<bool>, Control)> {
-    if cfg!(windows) && grant.capability == "process.exec" && grant.action == "run" {
+    if cfg!(windows) && supports_observation(grant) {
         let (sender, receiver) = tokio::sync::watch::channel(false);
         Some((sender, Control(receiver)))
     } else {
@@ -104,9 +162,13 @@ pub(crate) fn control(
     }
 }
 impl Control {
+    pub(crate) fn is_requested(&self) -> bool {
+        *self.0.borrow()
+    }
+
     pub(crate) async fn requested(&mut self) {
         loop {
-            if *self.0.borrow() {
+            if self.is_requested() {
                 return;
             }
             if self.0.changed().await.is_err() {

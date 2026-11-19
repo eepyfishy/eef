@@ -5,6 +5,120 @@ fn stop(ledger: &GrantLedger, g: &ExecutionGrant) -> Result<Report> {
 fn engine(dir: &Path) -> crate::NodeEngine {
     crate::NodeEngine::new(false, vec![], dir.into()).unwrap()
 }
+
+#[cfg(all(windows, feature = "native-test-fixtures"))]
+#[tokio::test]
+async fn direct_capture_stop_observes_root_and_descendant_before_releasing_capture() {
+    use crate::process_lifetime::tests::Processes;
+    let python = std::path::PathBuf::from(
+        std::env::var_os("EEF_TEST_PYTHON").expect("Pinned test interpreter"),
+    );
+    assert!(python.is_absolute() && python.is_file());
+    let runtime = Arc::new(crate::python::PythonRuntime::discover(Some(python)).unwrap());
+    for (capability, action) in [("audio.capture", "record"), ("camera.capture", "capture")] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("capture.py");
+        let plugin = format!(
+            r#"import json, os, pathlib, subprocess, sys, time
+CAPABILITY = '{capability}'
+ACTIONS = ['{action}']
+def handle(action, params):
+    if params.get('finish'):
+        return {{'fixture': 'completed'}}
+    child = subprocess.Popen([sys.executable, '-I', '-B', '-c', 'import time; time.sleep(30)'])
+    pathlib.Path(__file__).with_name('pids.json').write_text(json.dumps({{'root': os.getpid(), 'child': child.pid}}))
+    time.sleep(30)
+    return {{'fixture': 'unanticipated completion'}}
+"#
+        );
+        std::fs::write(&path, plugin).unwrap();
+        let policy =
+            serde_json::from_value(json!({"media":{"microphone":true,"camera":true}})).unwrap();
+        let mut runner = engine(dir.path()).with_policy(policy).unwrap();
+        runner
+            .add_python_plugin(runtime.clone(), path)
+            .await
+            .unwrap();
+        let ledger =
+            GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner")
+                .unwrap();
+        let mut grant = super::super::tests::grant();
+        grant.capability = capability.into();
+        grant.action = action.into();
+        grant.limits.max_execution_ms = 10_000;
+
+        let mut before_start = grant.clone();
+        before_start.grant_id = uuid::Uuid::new_v4().to_string();
+        before_start.job_id = uuid::Uuid::new_v4().simple().to_string();
+        let accepted = AcceptedGrant::prepare(
+            before_start.clone(),
+            ledger.clone(),
+            &runner,
+            &before_start.issuer_id,
+            &before_start.session_id,
+            "owner",
+        )
+        .unwrap();
+        let intent = stop(&ledger, &before_start).unwrap();
+        let report = accepted.run(&runner).await;
+        assert!(crate::process_stop::confirmed(&before_start, &intent, &report).is_none());
+        assert!(!dir.path().join("pids.json").exists());
+
+        let runner = Arc::new(runner);
+        let accepted = AcceptedGrant::prepare(
+            grant.clone(),
+            ledger.clone(),
+            &runner,
+            &grant.issuer_id,
+            &grant.session_id,
+            "owner",
+        )
+        .unwrap();
+        let execution = tokio::spawn({
+            let runner = runner.clone();
+            async move { accepted.run(&runner).await }
+        });
+        let processes = Processes::observe(dir.path()).await;
+        processes.alive();
+        assert!(
+            runner
+                .execute(capability, action, json!({"finish":true}))
+                .await
+                .is_err()
+        );
+        let intent = stop(&ledger, &grant).unwrap();
+        let report = tokio::time::timeout(Duration::from_secs(3), execution)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(processes.exited_now());
+        assert!(crate::process_stop::confirmed(&grant, &intent, &report).is_some());
+        assert_eq!(
+            report.error_code.as_deref(),
+            Some(crate::process_stop::CAPTURE_STOPPED)
+        );
+        assert_eq!(report.data.as_object().unwrap().len(), 1);
+        assert!(!report.success && !intent.execution_stopped && !intent.external_effects_stopped);
+        let retained: crate::request_result::RetainedResult = serde_json::from_value(
+            ledger
+                .result(
+                    &grant.issuer_id,
+                    &grant.grant_id,
+                    &definition_digest(&json!(grant)).unwrap(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(json!(retained.report.unwrap()), json!(report));
+        assert_eq!(
+            runner
+                .execute(capability, action, json!({"finish":true}))
+                .await
+                .unwrap(),
+            json!({"fixture":"completed"})
+        );
+    }
+}
 #[test]
 fn stop_before_admission_consumes_authority_durably_without_execution_or_fake_output() {
     let dir = tempfile::tempdir().unwrap();

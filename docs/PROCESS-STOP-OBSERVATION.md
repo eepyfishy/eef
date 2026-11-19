@@ -58,12 +58,30 @@ history is not proof no effects occurred and never permits automatic replay.
 
 ## Compatibility and remaining scope
 
-Ordinary RPC does not receive the private cancellation input. Direct admitted
-Windows processes alone use this observation path; Linux root-only execution,
-finite pipelines, peer flows, shared model services, Python workers, media and
-device buffers retain existing intent/unknown guarantees. Unsupported, offline
-or changed-credential peers produce unconfirmed/unavailable status, never a
-positive stop claim. No permission or transport exception is introduced.
+Ordinary RPC does not receive the private cancellation input. Linux root-only
+execution, finite pipelines, peer flows, shared model services, and device
+buffers retain their existing intent and uncertainty behavior. Unsupported,
+offline, or changed-credential peers produce unconfirmed or unavailable status.
+
+### One-shot camera and microphone capture (development)
+
+Windows nodes can also observe termination of the owned Python process tree for
+an admitted `camera.capture` or `audio.capture` grant. On stop, the node closes
+the exchange pipes and uses the original deadline to observe the root and its
+descendants exit. It releases the capture reservation after confirming that
+exact job's exit. A stop before launch produces no process evidence. If exit
+cannot be confirmed, the existing uncertainty and cleanup paths apply.
+
+The existing grant result carries `capture_owned_processes_stopped` with the
+owned tree observation and no capture output. This is an unsuccessful capture
+result. The observer requires the exact stop intent and retained report. A
+matching JSON field from a plugin cannot create that result. The observation
+covers the owned processes. Device buffers and external effects remain
+unconfirmed. The original stop-intent receipt remains unchanged.
+
+Hosted verification is pending. The new Windows fixture uses synthetic camera
+and microphone plugins and observes real root and child process handles. It
+also checks that the node can accept another capture once the first job exits.
 
 The common capability dispatcher returns a boxed future before selecting a
 provider. This keeps unused providers' state out of its callers' stack frames;

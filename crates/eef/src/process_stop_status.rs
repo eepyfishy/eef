@@ -56,7 +56,7 @@ impl Runtime {
         }
         let inspect = |grant: eefn::grants::ExecutionGrant| async move {
             let scope = eefn::grants::stop::Scope::from_grant(&grant)?;
-            if grant.capability != "process.exec" || grant.action != "run" {
+            if !eefn::process_stop::supports_observation(&grant) {
                 return Ok::<_, anyhow::Error>(GrantStatus {
                     scope,
                     availability: Availability::Unsupported,

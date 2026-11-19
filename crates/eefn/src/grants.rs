@@ -501,6 +501,9 @@ impl GrantReport {
                     && !self.success
                     && self.error_code.is_none()))
             && serde_json::to_vec(&self.data).is_ok_and(|v| v.len() <= g.limits.max_result_bytes)
+            && (self.error_code.as_deref() != Some(crate::process_stop::CAPTURE_STOPPED)
+                || (self.state == ReceiptState::Completed
+                    && crate::process_stop::capture_observation(g, &self.data).is_some()))
             && self.error_code.as_deref().is_none_or(identifier)
             && match self.state {
                 ReceiptState::Rejected | ReceiptState::Unknown => {
@@ -1061,11 +1064,18 @@ impl AcceptedGrant {
                     value=&mut operation=>break match value {
                         Ok(data) if serde_json::to_vec(&data).is_ok_and(|v|v.len()<=g.limits.max_result_bytes)=>completed_outcome(g,data),
                         Ok(_)=>GrantReport::new(g,ReceiptState::Completed,Value::Null,Some("result_too_large")),
-                        Err(error)=>GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some(
-                            if process_stopping { "grant_stop_requested_effects_unknown" } else {
-                            error.downcast_ref::<crate::python::BridgeFailure>().map(|failure|failure.code())
-                                .or_else(||error.downcast_ref::<crate::peer::Failure>().map(|failure|failure.code()))
-                                .unwrap_or("execution_failed_effects_unknown") })),
+                        Err(error)=>{
+                            if process_stopping && let Some(stopped) = error.downcast_ref::<crate::process_stop::CaptureStopped>() {
+                                stopped.report(g)
+                            } else {
+                                let code = if process_stopping { "grant_stop_requested_effects_unknown" } else {
+                                    error.downcast_ref::<crate::python::BridgeFailure>().map(|failure|failure.code())
+                                        .or_else(||error.downcast_ref::<crate::peer::Failure>().map(|failure|failure.code()))
+                                        .unwrap_or("execution_failed_effects_unknown")
+                                };
+                                GrantReport::new(g, ReceiptState::Unknown, Value::Null, Some(code))
+                            }
+                        },
                     }
                 }
             }

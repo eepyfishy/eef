@@ -368,6 +368,7 @@ impl PythonRuntime {
             output_limit,
             execution_deadline,
             None,
+            None,
         )
         .await
     }
@@ -379,6 +380,7 @@ impl PythonRuntime {
         output_limit: usize,
         execution_deadline: Option<Instant>,
         reservation: Option<crate::capture_ownership::Reservation>,
+        stop: Option<crate::process_stop::Control>,
     ) -> Result<Value> {
         if !plugin
             .actions
@@ -398,6 +400,7 @@ impl PythonRuntime {
                 .min(self.limits.max_stdout_bytes),
             execution_deadline,
             reservation,
+            stop,
         )
         .await
     }
@@ -415,6 +418,7 @@ impl PythonRuntime {
             stdout_limit,
             execution_deadline,
             None,
+            None,
         )
         .await
     }
@@ -425,6 +429,7 @@ impl PythonRuntime {
         stdout_limit: usize,
         execution_deadline: Option<Instant>,
         reservation: Option<crate::capture_ownership::Reservation>,
+        stop: Option<crate::process_stop::Control>,
     ) -> Result<Value> {
         self.call_host(
             PLUGIN_HOST,
@@ -433,6 +438,7 @@ impl PythonRuntime {
             stdout_limit,
             execution_deadline,
             reservation,
+            stop,
         )
         .await
     }
@@ -449,6 +455,7 @@ impl PythonRuntime {
             1024,
             None,
             Some(reservation),
+            None,
         )
         .await
     }
@@ -461,7 +468,14 @@ impl PythonRuntime {
         stdout_limit: usize,
         execution_deadline: Option<Instant>,
         reservation: Option<crate::capture_ownership::Reservation>,
+        mut stop: Option<crate::process_stop::Control>,
     ) -> Result<Value> {
+        if stop
+            .as_ref()
+            .is_some_and(crate::process_stop::Control::is_requested)
+        {
+            bail!("Capture stopped before Python startup");
+        }
         self.limits.validate()?;
         // Never silently drop an explicitly requested native ceiling.
         crate::model_memory::supported(self.limits.max_job_memory_mib)?;
@@ -499,6 +513,12 @@ impl PythonRuntime {
         if Instant::now() >= deadline {
             return Err(BridgeFailure::Deadline.into());
         }
+        if stop
+            .as_ref()
+            .is_some_and(crate::process_stop::Control::is_requested)
+        {
+            bail!("Capture stopped before Python startup");
+        }
         let spawn_started = Instant::now();
         let (mut child, tree) = crate::process_lifetime::spawn_with_job_limits_before(
             &mut command,
@@ -521,7 +541,7 @@ impl PythonRuntime {
         let stderr = child.stderr.take().context("Python stderr unavailable")?;
         // Readers are owned by this future, not detached tasks. They drain
         // concurrently with writing and waiting, including pipe inheritance.
-        let outcome = exchange(
+        let reply = Box::pin(exchange(
             stdin,
             stdout,
             stderr,
@@ -553,8 +573,31 @@ impl PythonRuntime {
                 }
                 Ok(status)
             },
-        )
-        .await;
+        ));
+        let outcome = if let Some(control) = &mut stop {
+            tokio::select! {
+                biased;
+                _ = control.requested() => None,
+                result = reply => Some(result),
+            }
+        } else {
+            Some(reply.await)
+        };
+        let Some(outcome) = outcome else {
+            // Dropping the exchange closes the output path. Keep the original
+            // owned job and reservation until the stop has a local OS witness.
+            #[cfg(windows)]
+            {
+                let capture = capture
+                    .as_mut()
+                    .context("Capture stop lacks an owned reservation")?;
+                let exit = tree.terminate_and_witness_until(deadline).await?;
+                capture.observed_exit(&exit)?;
+                return Err(crate::process_stop::CaptureStopped::observed(exit).into());
+            }
+            #[cfg(not(windows))]
+            bail!("Owned capture stop observation unsupported");
+        };
         let exchange_ended = Instant::now();
         if outcome.is_err() {
             if let Some(capture) = &mut capture {
