@@ -385,7 +385,9 @@ impl ModelRegistry {
     ) -> Vec<ModelSpec> {
         let mut chain = Vec::new();
         let exceeds = |spec: &ModelSpec| {
-            cold_memory_hint(spec, state, now).is_some_and(ColdMemoryHint::exceeds_available)
+            cold_memory_hint(spec, state, now)
+                .as_ref()
+                .is_some_and(ColdMemoryHint::exceeds_available)
         };
         let compare = |left: &ModelSpec, right: &ModelSpec| {
             exceeds(left)
@@ -525,7 +527,7 @@ struct ColdMemoryHint {
 }
 
 impl ColdMemoryHint {
-    fn exceeds_available(self) -> bool {
+    fn exceeds_available(&self) -> bool {
         self.estimated_ram_mib > self.available_bytes / (1024 * 1024)
     }
 }
