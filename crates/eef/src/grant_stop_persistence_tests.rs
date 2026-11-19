@@ -491,3 +491,73 @@ async fn abandoned_public_stops_keep_native_capacity_without_revoking_or_writing
     assert_eq!(json!(engine.store.get(id).unwrap()), json!(plan));
     owner.check(id).unwrap();
 }
+
+#[tokio::test]
+async fn public_stop_status_uses_the_bounded_journal_reader() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("owner.json");
+    std::fs::write(
+        &config,
+        serde_json::to_vec(&json!({
+            "node":{"psk":"private-stop-status-fixture","host":"127.0.0.1","port":0},
+            "update":{"policy":"off"},"python":{"plugins":[]},
+            "firmware":{"repository":dir.path().join("firmware")}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let runtime = crate::Runtime::initialize(
+        crate::config::Config::load(Some(&config)).unwrap(),
+        dir.path().join("owner.db"),
+        false,
+    )
+    .await
+    .unwrap();
+    let (plan, grant, _) = crate::request_execution::tests::issued(&runtime.engine);
+    let command = eefn::process_stop_status::Command {
+        id: plan.plan_id.clone(),
+    };
+    let request = eefn::process_stop_status::Request {
+        schema_version: 1,
+        command: command.clone(),
+        expected_runtime_id: runtime.runtime_id().into(),
+    };
+    let store = &runtime.engine.store;
+    let started = store.journal_reads_started();
+    let capacity = store.journal_read_capacity_available();
+    let (held, ready) = hold_grant_journal(store.clone());
+    ready.await.unwrap();
+    let mut inspect = Box::pin(runtime.process_stop_status_command(request));
+    tokio::select! {
+        biased;
+        value = &mut inspect => panic!("Stop inspection returned while the journal was held: {value:?}"),
+        result = tokio::time::timeout(Duration::from_secs(2), async {
+            while store.journal_reads_started() == started { tokio::task::yield_now().await; }
+        }) => result.unwrap(),
+    }
+    assert_eq!(store.journal_read_capacity_available(), capacity - 1);
+    let wakes = runtime.engine.stop_changes.subscribe();
+    drop(held);
+    let report = inspect.await.unwrap();
+    let origin = grant.request_context.origin_node();
+    assert!(eefn::process_stop_status::confirmed(
+        &report,
+        &command,
+        Some(origin),
+        Some(runtime.runtime_id())
+    ));
+    assert_eq!(report["stop_requested"], false);
+    assert_eq!(report["stop_signal_sent"], false);
+    assert_eq!(report["issued_attempts"], 1);
+    assert_eq!(report["not_inspected_issued_attempts"], 1);
+    assert_eq!(report["revision"], plan.revision);
+    assert!(
+        runtime
+            .inspect_process_stop_status(command, Some("other-origin"))
+            .await
+            .is_err()
+    );
+    assert!(!wakes.has_changed().unwrap());
+    assert_eq!(json!(store.get(&plan.plan_id).unwrap()), json!(plan));
+    runtime.shutdown().await;
+}

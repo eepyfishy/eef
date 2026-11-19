@@ -28,9 +28,11 @@ tracking. No UI polling/controller or model is involved.
 
 Owner clients POST a strict versioned request with the expected current runtime
 to `/api/commands/jobs/stop-status`. The backend captures the original revision
-and stop-delivery targets, with at most two concurrent, five-second read-only
-observations. Historical reads still require the same pinned issuer and node;
-reconnect never authorizes a replacement grant or ordinary-RPC fallback.
+and stop-delivery targets on the bounded journal reader. The local snapshot and
+up to two parallel executor observations share five seconds. If the snapshot
+cannot be read, the command reports an error. Late or unavailable executor
+evidence is marked unavailable. Historical reads still require the same pinned
+issuer and node. The command uses the original grant scope after reconnect.
 
 ## What is retained and displayed
 

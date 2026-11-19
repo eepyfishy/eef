@@ -3,6 +3,8 @@ use crate::Runtime;
 use anyhow::{Context, Result, bail};
 use eefn::process_stop_status::{Availability, Command, GrantStatus, Report, Request};
 use serde_json::Value;
+use std::time::Duration;
+use tokio::time::Instant;
 
 impl Runtime {
     pub async fn process_stop_status_command(&self, request: Request) -> Result<Value> {
@@ -19,7 +21,8 @@ impl Runtime {
         origin: Option<&str>,
     ) -> Result<Value> {
         command.validate()?;
-        let plan = self.engine.store.get(&command.id)?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let plan = self.engine.store.get_before(&command.id, deadline).await?;
         let context = plan
             .goal
             .request_context
@@ -83,18 +86,20 @@ impl Runtime {
                     observation,
                 })
             };
-            // A new read-only wait budget never extends execution authority.
-            Ok(
-                match tokio::time::timeout(std::time::Duration::from_secs(5), read).await {
-                    Ok(Ok(status)) => status,
-                    _ => GrantStatus {
-                        scope,
-                        availability: Availability::Unavailable,
-                        intent_recorded: false,
-                        observation: None,
-                    },
-                },
-            )
+            // The journal and parallel executor reads share one observation
+            // budget. A late result cannot establish a stop observation.
+            if Instant::now() < deadline
+                && let Ok(Ok(status)) = tokio::time::timeout_at(deadline, read).await
+                && Instant::now() < deadline
+            {
+                return Ok(status);
+            }
+            Ok(GrantStatus {
+                scope: scope.clone(),
+                availability: Availability::Unavailable,
+                intent_recorded: false,
+                observation: None,
+            })
         };
         let grants = match targets.as_slice() {
             [] => vec![],
