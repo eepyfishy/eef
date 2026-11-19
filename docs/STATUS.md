@@ -5,6 +5,17 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+Source `d0b379c` passes all four hosted jobs in
+[run 44435420551](https://github.com/eepyfishy/eef/actions/runs/44435420551).
+Windows/headless passed 1,883 Rust tests across 18 groups with one ignored, all
+37 native suites and the retained additional gates. Exact-source and raw-log
+review accepts the bounded native journal worker for public job stop intent.
+Four regressions cover origin checks, original runner retirement, abandoned
+waiters, capacity, and real SQLite contention. The public process and paired
+audio checks still pass. This checkpoint covers the initial stop intent only.
+Physical stop and stable release acceptance remain open. See the
+[public stop intent contract](GRANT-STOP.md#public-stop-intent-persistence-development).
+
 Source `117c750` passes all four hosted jobs in
 [run 44318762717](https://github.com/eepyfishy/eef/actions/runs/44318762717):
 1,879 Windows/headless Rust tests, one ignored across 18 groups, all 37 native

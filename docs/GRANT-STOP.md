@@ -95,7 +95,14 @@ successful response reports saved intent. Retained stop receipts and owned
 process observations provide the separate evidence about delivery and effects.
 The four new regression tests cover origin ownership, retiring the original
 runner, abandoned requests, admission capacity and actual SQLite lock contention.
-Hosted verification is pending.
+Source `d0b379c` passes all four jobs in
+[run 44435420551](https://github.com/eepyfishy/eef/actions/runs/44435420551).
+Windows/headless passed 1,883 Rust tests across 18 groups with one ignored,
+all 37 native suites and the retained additional gates. Exact-source and raw-log
+review verified the public origin and owner routes, the one-job claim reservation
+and the existing native command path. This establishes bounded persistence of
+the initial intent. Delivery, owned-process exit and physical effects require
+their own evidence.
 
 ## Admission races and node persistence
 
