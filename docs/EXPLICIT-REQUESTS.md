@@ -70,6 +70,11 @@ one source/plan while that job history exists; removing history ends that scope.
 An explicitly repeated exact command may finish a still-eligible partial admission.
 It cannot compile against a later edited revision or revive cancelled work.
 
+Authoring checks the journal one row at a time and retains only the matching
+origin and operation's plan. Ambiguous or damaged history still refuses the
+lookup. Creating a review makes a separate deduplication check under the journal
+lock.
+
 Already-compiled exact receipts inspect frozen history without fresh provider
 lookup, model selection or authority renewal. They work after restart and later
 approval/execution, with no new model call or runner. The source and compiled input

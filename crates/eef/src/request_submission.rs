@@ -37,23 +37,6 @@ fn matches_source(
     Ok(())
 }
 impl crate::Runtime {
-    pub(crate) fn retained_authoring_review(
-        &self,
-        context: &RequestContext,
-    ) -> Result<Option<crate::task::Plan>> {
-        let mut matching = self.engine.store.list()?.into_iter().filter(|plan| {
-            plan.goal.request_context.as_ref().is_some_and(|saved| {
-                saved.origin_node() == context.origin_node()
-                    && saved.request_id() == context.request_id()
-            })
-        });
-        let previous = matching.next();
-        if matching.next().is_some() {
-            bail!("Ambiguous retained request receipt")
-        }
-        Ok(previous)
-    }
-
     pub async fn origin_concrete_request(
         &self,
         input: ConcreteInput,
@@ -91,7 +74,12 @@ impl crate::Runtime {
                 Some((ResolvedSource::Camera(source), previous)) => {
                     (None, None, Some(source), previous)
                 }
-                None => (None, None, None, self.retained_authoring_review(context)?),
+                None => (
+                    None,
+                    None,
+                    None,
+                    self.engine.store.retained_authoring_review(context)?,
+                ),
             };
             if let Some(source) = &camera {
                 let template =

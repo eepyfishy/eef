@@ -30,7 +30,7 @@ impl crate::Runtime {
     ) -> Result<Value> {
         input.validate()?;
         eefn::job_commands::validate_operation_id(context.request_id())?;
-        let previous = self.retained_authoring_review(context)?;
+        let previous = self.engine.store.retained_authoring_review(context)?;
         // Inspect exact retained intent/bindings BEFORE any provider lookup.
         let concrete = if let Some(saved) = &previous {
             crate::jobs::validate_retained_review(saved)?;

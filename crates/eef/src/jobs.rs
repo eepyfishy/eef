@@ -1,6 +1,7 @@
 //! Single-coordinator durable job journal. No election or cross-coordinator lease.
 use crate::task::{Plan, PlanStatus, TaskStatus};
 use anyhow::{Context, Result, bail};
+use eefn::context::RequestContext;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -326,14 +327,33 @@ impl JobStore {
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows.into_iter()
-            .map(|s| {
-                let plan: Plan = serde_json::from_str(&s)
-                    .context("Damaged job record; retained for recovery")?;
-                validate_retained_review(&plan)?;
-                automation_occurrences::validate_job(&connection, &plan)?;
-                Ok(plan)
-            })
+            .map(|raw| read_listed_plan(&connection, &raw))
             .collect()
+    }
+
+    /// Validate the same retained rows as listing while keeping only the
+    /// originating operation's plan. Admission still rechecks under its lock.
+    pub(crate) fn retained_authoring_review(
+        &self,
+        origin: &RequestContext,
+    ) -> Result<Option<Plan>> {
+        let connection = self.connection.lock().expect("job journal");
+        let mut statement = connection.prepare("SELECT plan_json FROM durable_jobs")?;
+        let mut rows = statement.query([])?;
+        let mut previous = None;
+        while let Some(row) = rows.next()? {
+            let plan = read_listed_plan(&connection, row.get_ref(0)?.as_str()?)?;
+            if plan.goal.request_context.as_ref().is_some_and(|saved| {
+                saved.origin_node() == origin.origin_node()
+                    && saved.request_id() == origin.request_id()
+            }) {
+                if previous.is_some() {
+                    bail!("Ambiguous retained request receipt");
+                }
+                previous = Some(plan);
+            }
+        }
+        Ok(previous)
     }
     /// This counter grants no authority and is not reconstructed as job state.
     pub(crate) fn source_changes(&self) -> tokio::sync::watch::Receiver<u64> {
@@ -753,6 +773,14 @@ impl JobStore {
         Ok(())
     }
 }
+fn read_listed_plan(connection: &Connection, raw: &str) -> Result<Plan> {
+    let plan: Plan =
+        serde_json::from_str(raw).context("Damaged job record; retained for recovery")?;
+    validate_retained_review(&plan)?;
+    automation_occurrences::validate_job(connection, &plan)?;
+    Ok(plan)
+}
+
 fn read(connection: &Connection, id: &str) -> Result<Plan> {
     let raw: String = connection
         .query_row(
@@ -1613,6 +1641,10 @@ mod tests {
             .insert(TaskPlanner.plan(goal.clone()).unwrap())
             .unwrap();
         let before = serde_json::to_value(store.list().unwrap()).unwrap();
+        let opening = store
+            .retained_authoring_review(goal.request_context.as_ref().unwrap())
+            .unwrap_err();
+        assert!(opening.to_string().contains("Ambiguous"));
         let result = store.admit_request(TaskPlanner.plan(goal).unwrap());
         assert!(result.err().unwrap().to_string().contains("ambiguous"));
         assert_eq!(serde_json::to_value(store.list().unwrap()).unwrap(), before);
@@ -1733,7 +1765,12 @@ mod tests {
         store.connection.lock().unwrap().execute(
             "INSERT INTO durable_jobs(job_id,plan_json,updated_ms,reserved_bytes) VALUES ('damaged','broken',0,0)", [],
         ).unwrap();
-        let error = store.admit_request(plan("write_file")).err().unwrap();
+        let opening = plan("write_file");
+        let error = store
+            .retained_authoring_review(opening.goal.request_context.as_ref().unwrap())
+            .unwrap_err();
+        assert!(error.to_string().contains("Damaged job record"));
+        let error = store.admit_request(opening).err().unwrap();
         assert!(error.to_string().contains("Damaged job record"));
         let connection = store.connection.lock().unwrap();
         let count: i64 = connection
@@ -1782,6 +1819,20 @@ mod tests {
             .unwrap();
         drop(store);
         let engine = TaskEngine::legacy_with_store_for_test(EventBus::new(10), open(&path));
+        let matched = engine
+            .store
+            .retained_authoring_review(&origin)
+            .unwrap()
+            .unwrap();
+        assert_eq!(matched.plan_id, target_id);
+        let foreign = receipt_origin("other", &operation_id, "Study");
+        assert!(
+            engine
+                .store
+                .retained_authoring_review(&foreign)
+                .unwrap()
+                .is_none()
+        );
         let page = engine
             .job_request("jobs.list", json!({}), Some(origin.clone()))
             .unwrap();
