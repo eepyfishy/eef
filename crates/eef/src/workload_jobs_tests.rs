@@ -76,12 +76,12 @@ pub(crate) fn review_input(engine: &TaskEngine, input: PlanInput) -> (Plan, Plan
 pub(crate) fn planned(engine: &TaskEngine) -> (Plan, PlanningCommand) {
     let (review, input) = review(engine);
     let command = PlanningCommand::Compile {
-        id: review.plan_id,
+        id: review.plan_id.clone(),
         expected_revision: review.revision,
         operation_id: uuid::Uuid::new_v4().to_string(),
         input,
     };
-    (compile(engine, &command).unwrap(), command)
+    (compile(engine, &review, &command).unwrap().0, command)
 }
 fn approved(engine: &TaskEngine) -> (Plan, ApprovalCommand) {
     let (plan, _) = planned(engine);
@@ -532,6 +532,38 @@ async fn quota_failure_keeps_the_approved_plan_without_issuance_or_lease_authori
     assert_eq!(json!(store.get(&plan.plan_id).unwrap()), json!(plan));
 }
 
+#[test]
+fn overlapping_compiles_reuse_only_the_exact_checkpoint() {
+    let engine = TaskEngine::new(EventBus::new(20));
+    let (review, input) = review(&engine);
+    let command = PlanningCommand::Compile {
+        id: review.plan_id.clone(),
+        expected_revision: review.revision,
+        operation_id: uuid::Uuid::new_v4().to_string(),
+        input: input.clone(),
+    };
+    // Both callers retained this review before either saved its compilation.
+    let (first, reused) = compile(&engine, &review, &command).unwrap();
+    assert!(!reused);
+    assert_eq!(first.revision, review.revision + 1);
+    assert!(first.approval.is_none() && first.execution.is_none());
+    let (second, reused) = compile(&engine, &review, &command).unwrap();
+    assert!(reused);
+    assert_eq!(json!(second), json!(first));
+
+    let different_operation = PlanningCommand::Compile {
+        id: review.plan_id.clone(),
+        expected_revision: review.revision,
+        operation_id: uuid::Uuid::new_v4().to_string(),
+        input,
+    };
+    assert!(compile(&engine, &review, &different_operation).is_err());
+    assert_eq!(
+        json!(engine.store.get(&review.plan_id).unwrap()),
+        json!(first)
+    );
+}
+
 #[tokio::test]
 async fn source_planning_cannot_checkpoint_after_engine_shutdown() {
     let engine = TaskEngine::new(EventBus::new(20));
@@ -543,7 +575,7 @@ async fn source_planning_cannot_checkpoint_after_engine_shutdown() {
         input,
     };
     engine.shutdown().await;
-    assert!(compile(&engine, &command).is_err());
+    assert!(compile(&engine, &plan, &command).is_err());
     assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), json!(plan));
 }
 

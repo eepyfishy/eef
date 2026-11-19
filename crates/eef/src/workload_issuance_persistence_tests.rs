@@ -31,14 +31,16 @@ fn busy_issuance_fixture_with_session(
         let (review, input) = review_input(&engine, input);
         let plan = compile(
             &engine,
+            &review,
             &PlanningCommand::Compile {
-                id: review.plan_id,
+                id: review.plan_id.clone(),
                 expected_revision: review.revision,
                 operation_id: uuid::Uuid::new_v4().to_string(),
                 input,
             },
         )
-        .unwrap();
+        .unwrap()
+        .0;
         approve(
             &engine,
             &ApprovalCommand {

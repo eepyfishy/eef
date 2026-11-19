@@ -75,7 +75,9 @@ The existing explicit request compiler now accepts an exact continuous template
 after immutable-origin/disclosure checks and a fresh authenticated source read.
 The source/resource digests must match, and pending resource edits are refused.
 Its checkpoint shares the existing task engine's shutdown gate. Retained retries
-are read-only; compilation creates no approval, session offer or capture. The
+are read-only. If two compile commands passed the source read for the same review,
+the journal returns the first checkpoint to an exact duplicate. A conflicting
+operation is refused. Compilation creates no approval, session offer or capture. The
 node-facing planning view validates the exact nested source and task binding.
 Legacy operation approval continues to refuse session plans.
 

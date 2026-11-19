@@ -55,12 +55,12 @@ fn vision_input(large: bool) -> PlanInput {
 fn vision_approved(engine: &TaskEngine, large: bool) -> Plan {
     let (review, input) = review_input(engine, vision_input(large));
     let command = PlanningCommand::Compile {
-        id: review.plan_id,
+        id: review.plan_id.clone(),
         expected_revision: review.revision,
         operation_id: uuid::Uuid::new_v4().to_string(),
         input,
     };
-    let plan = compile(engine, &command).unwrap();
+    let (plan, _) = compile(engine, &review, &command).unwrap();
     let approval = ApprovalCommand {
         id: plan.plan_id.clone(),
         expected_revision: plan.revision,

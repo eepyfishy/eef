@@ -732,9 +732,10 @@ impl crate::Runtime {
                 .workload_source(&template, 5)
                 .await
                 .inspect_err(|_| failed("source_check"))?;
-            let plan = crate::workload_jobs::compile(&self.engine, &request.command)
-                .inspect_err(|_| failed("compile_checkpoint"))?;
-            return Ok(report(plan, &request.command, &self.instance_id, false));
+            let (plan, reused) =
+                crate::workload_jobs::compile(&self.engine, &saved, &request.command)
+                    .inspect_err(|_| failed("compile_checkpoint"))?;
+            return Ok(report(plan, &request.command, &self.instance_id, reused));
         }
         if draft.current().workload != eefn::interpretation::Workload::OneShot {
             bail!("Continuous/unknown workloads require the future local pipeline compiler")

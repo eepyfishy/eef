@@ -334,9 +334,9 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
 /// verify disclosed, fresh authenticated node/resource metadata before using it.
 pub(crate) fn compile(
     engine: &crate::task::TaskEngine,
+    saved: &Plan,
     command: &crate::request_planning::PlanningCommand,
-) -> Result<Plan> {
-    let store = &engine.store;
+) -> Result<(Plan, bool)> {
     use crate::request_planning::{PlannedBinding, PlanningCommand, PlanningRecord};
     let PlanningCommand::Compile {
         id,
@@ -349,20 +349,12 @@ pub(crate) fn compile(
     };
     command.validate()?;
     ensure!(input.template == TEMPLATE, "Not a workload template");
-    let saved = store.get(id)?;
-    if let Some(p) = &saved.planning {
-        ensure!(
-            p.operation_id == *operation_id
-                && p.source_revision == *expected_revision
-                && p.input == *input,
-            "Conflicting retained workload plan"
-        );
-        return Ok(saved);
-    }
     input.validate_for_new_work()?;
     ensure!(
-        saved.revision == *expected_revision
+        saved.plan_id == *id
+            && saved.revision == *expected_revision
             && saved.status == PlanStatus::Review
+            && saved.planning.is_none()
             && saved
                 .request_review
                 .as_ref()
@@ -371,7 +363,7 @@ pub(crate) fn compile(
                     && !r.current().needs_clarification),
         "Workload review/revision changed"
     );
-    let mut compiled = crate::request_planning::unbound_plan(&saved, input)?;
+    let mut compiled = crate::request_planning::unbound_plan(saved, input)?;
     let w = Template::from_params(&input.params)?;
     compiled.plan_id = saved.plan_id.clone();
     compiled.request_review = saved.request_review.clone();
@@ -399,10 +391,23 @@ pub(crate) fn compile(
     };
     record.plan_sha256 = crate::request_planning::digest(&compiled, &record)?;
     compiled.planning = Some(record);
-    engine.edit_review_checkpoint(
+    let mut reused = false;
+    let result = engine.edit_review_checkpoint(
         id,
         "Exact continuous source plan retained; no approval or dispatch",
         |plan| {
+            if let Some(record) = &plan.planning {
+                ensure!(
+                    plan.goal.request_context == saved.goal.request_context
+                        && record.operation_id == *operation_id
+                        && record.source_revision == *expected_revision
+                        && record.input == *input
+                        && record.preparation.is_none(),
+                    "Concurrent concrete plan retained; inspect before retrying"
+                );
+                reused = true;
+                return Ok(false);
+            }
             ensure!(
                 plan.revision == *expected_revision
                     && plan.status == PlanStatus::Review
@@ -416,7 +421,8 @@ pub(crate) fn compile(
             plan.status = PlanStatus::AwaitingApproval;
             Ok(true)
         },
-    )
+    )?;
+    Ok((result, reused))
 }
 pub(crate) fn approve(
     engine: &crate::task::TaskEngine,
