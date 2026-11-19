@@ -1,7 +1,7 @@
 //! Passive camera source bindings, not device probing or execution authority.
 use crate::workload_leases::definition::{Source, Template, camera_resource_digest};
 pub use crate::workload_sources::{Request, Resource};
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -201,61 +201,13 @@ impl crate::NodeServer {
         node: &str,
         freshness_seconds: u64,
     ) -> Result<Report> {
-        use std::{collections::BTreeSet, time::Duration};
-        ensure!(
-            (1..=60).contains(&freshness_seconds),
-            "Invalid source freshness bound"
-        );
-        let before = self.grant_session(node).await?;
-        let (_, age) = self
-            .peer_records(&BTreeSet::from([node.into()]))
-            .await?
-            .pop()
-            .context("Camera node is not registered")?;
-        ensure!(
-            age <= Duration::from_secs(freshness_seconds),
-            "Camera node registration is stale"
-        );
-        let state = self
-            .node_state(node)
-            .await
-            .context("Camera node state unavailable")?;
-        let offer: crate::registration::Offer =
-            serde_json::from_value(state.registration["registration_receipt"].clone())?;
-        offer.validate()?;
-        let request = Request {
-            schema_version: 2,
-            expected_node_id: node.into(),
-            expected_runtime_id: offer.runtime_id,
-        };
-        let response = self
-            .invoke_remote(
-                node,
-                "node.configure",
-                "camera_workload_sources",
-                json!(request),
-                Duration::from_secs(5),
-            )
-            .await?;
-        ensure!(
-            response["success"] == true,
-            "Camera node refused inspection"
-        );
-        let report: Report = serde_json::from_value(response["data"].clone())?;
-        report.validate(&request)?;
-        ensure!(
-            self.grant_session(node).await? == before,
-            "Authenticated camera session changed during inspection"
-        );
-        let latest = self.node_state(node).await.context("Camera node retired")?;
-        let latest: crate::registration::Offer =
-            serde_json::from_value(latest.registration["registration_receipt"].clone())?;
-        latest.validate()?;
-        ensure!(
-            latest.runtime_id == request.expected_runtime_id,
-            "Camera runtime changed during inspection"
-        );
-        Ok(report)
+        self.inspect_workload_sources(
+            node,
+            freshness_seconds,
+            crate::workload_leases::definition::SourceKind::CameraMotion,
+            Report::validate,
+        )
+        .await
     }
 }
 

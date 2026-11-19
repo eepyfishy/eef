@@ -328,5 +328,9 @@ async fn authenticated_camera_snapshot_uses_current_pinned_registration_without_
             .unwrap()
             .is_err()
     );
-    assert!(server.camera_workload_sources("node", 5).await.is_err());
+    let disconnected = server.camera_workload_sources("node", 5).await.unwrap_err();
+    assert_eq!(
+        disconnected.downcast_ref(),
+        Some(&crate::workload_sources::SourceInspectionFailure::RegistrationUnavailable)
+    );
 }

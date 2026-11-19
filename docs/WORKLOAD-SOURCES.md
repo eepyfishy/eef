@@ -71,6 +71,12 @@ runtime identity and the authenticated session before and after the read. The
 node refuses this action over legacy shared-secret sessions. Older peers have
 no fallback. The read-only operation uses reserved control capacity.
 
+The microphone, camera and vision queries pin the selected session and runtime at
+dispatch. If the node reconnects before dispatch, the old query is refused. For
+a failed compilation source check, coordinator logs under `eef::workload_authoring`
+include a fixed classification such as `StaleRegistration`, `NodeBusy` or
+`ExchangeUnconfirmed`. Logs omit the provider reply and private source bindings.
+
 The existing explicit request compiler now accepts an exact continuous template
 after immutable-origin/disclosure checks and a fresh authenticated source read.
 The source/resource digests must match, and pending resource edits are refused.

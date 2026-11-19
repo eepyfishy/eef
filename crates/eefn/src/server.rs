@@ -137,7 +137,7 @@ struct Connection {
     state: Option<NodeStateSnapshot>,
     last_seen: Instant,
 }
-struct CameraControlBinding {
+struct PinnedControlBinding {
     session_id: Uuid,
     runtime_id: String,
 }
@@ -452,8 +452,8 @@ impl NodeServer {
             let connection = connections
                 .get(&request.expected_node_id)
                 .context("Camera node unavailable")?;
-            Self::check_camera_control(connection, &request.expected_runtime_id)?;
-            CameraControlBinding {
+            Self::check_pinned_control(connection, &request.expected_runtime_id)?;
+            PinnedControlBinding {
                 session_id: connection.session_id,
                 runtime_id: request.expected_runtime_id.clone(),
             }
@@ -463,7 +463,7 @@ impl NodeServer {
         } else {
             "camera_setup"
         };
-        self.invoke_message_with_camera_binding(&request.expected_node_id,
+        self.invoke_message_with_pinned_control(&request.expected_node_id,
             json!({"type":"request","capability":"node.configure","action":action,"params":request}),
             Duration::from_secs(10),None,None,None,Some(binding)).await
     }
@@ -478,31 +478,108 @@ impl NodeServer {
             let connection = connections
                 .get(&request.expected_node_id)
                 .context("Camera node unavailable")?;
-            Self::check_camera_control(connection, &request.expected_runtime_id)?;
-            CameraControlBinding {
+            Self::check_pinned_control(connection, &request.expected_runtime_id)?;
+            PinnedControlBinding {
                 session_id: connection.session_id,
                 runtime_id: request.expected_runtime_id.clone(),
             }
         };
-        self.invoke_message_with_camera_binding(&request.expected_node_id,
+        self.invoke_message_with_pinned_control(&request.expected_node_id,
             json!({"type":"request","capability":"node.configure","action":"camera_check","params":request}),
             Duration::from_secs(request.settings.timeout_seconds + 4), None, None, None, Some(binding)).await
     }
-    fn check_camera_control(connection: &Connection, runtime: &str) -> Result<()> {
+    fn check_pinned_control(connection: &Connection, runtime: &str) -> Result<()> {
         if !connection.credential_transport {
-            bail!("Camera setup requires an independently authenticated pinned connection");
+            bail!("This control requires an independently authenticated pinned connection");
         }
         let state = connection
             .state
             .as_ref()
-            .context("Camera node registration unavailable")?;
+            .context("Pinned node registration unavailable")?;
         let offer: crate::registration::Offer =
             serde_json::from_value(state.registration["registration_receipt"].clone())?;
         offer.validate()?;
         if offer.runtime_id != runtime {
-            bail!("Camera setup runtime changed; inspect before deciding what to do");
+            bail!("Pinned node runtime changed; inspect before deciding what to do");
         }
         Ok(())
+    }
+
+    /// Passive source inspection uses the exact session and runtime selected
+    /// before the read. A reconnect cannot receive the old request.
+    pub(crate) async fn inspect_workload_sources<T: serde::de::DeserializeOwned>(
+        &self,
+        node: &str,
+        freshness_seconds: u64,
+        kind: crate::workload_leases::definition::SourceKind,
+        validate: impl FnOnce(&T, &crate::workload_sources::Request) -> Result<()>,
+    ) -> Result<T> {
+        use crate::workload_leases::definition::SourceKind;
+        use crate::workload_sources::SourceInspectionFailure as Failure;
+        ensure!(
+            (1..=60).contains(&freshness_seconds),
+            "Invalid source freshness bound"
+        );
+        let (request, binding, before) = {
+            let connections = self.inner.connections.read().await;
+            let c = connections
+                .get(node)
+                .context(Failure::RegistrationUnavailable)?;
+            let before = self
+                .grant_session_info(node, c)
+                .context(Failure::RegistrationUnavailable)?;
+            ensure!(c.advertisement.is_some(), Failure::RegistrationUnavailable);
+            ensure!(
+                c.last_seen.elapsed() <= Duration::from_secs(freshness_seconds),
+                Failure::StaleRegistration
+            );
+            let state = c.state.as_ref().context(Failure::RegistrationUnavailable)?;
+            let offer: crate::registration::Offer =
+                serde_json::from_value(state.registration["registration_receipt"].clone())
+                    .context(Failure::RegistrationUnavailable)?;
+            offer.validate().context(Failure::RegistrationUnavailable)?;
+            let binding = PinnedControlBinding {
+                session_id: c.session_id,
+                runtime_id: offer.runtime_id.clone(),
+            };
+            let request = crate::workload_sources::Request {
+                schema_version: 2,
+                expected_node_id: node.into(),
+                expected_runtime_id: offer.runtime_id,
+            };
+            (request, binding, before)
+        };
+        let action = match kind {
+            SourceKind::MicrophoneEnergy => "workload_sources",
+            SourceKind::CameraMotion => "camera_workload_sources",
+            SourceKind::CameraVision => "vision_workload_sources",
+        };
+        crate::execution_boundary::require_control("node.configure")?;
+        let response = self.invoke_message_with_pinned_control(node,
+            json!({"type":"request","capability":"node.configure","action":action,"params":request,"request_context":null}),
+            Duration::from_secs(5), None, None, None, Some(binding)).await
+            .context(Failure::ExchangeUnconfirmed)?;
+        if response["success"] != true {
+            bail!(if response["error_type"] == "NodeBusy" {
+                Failure::NodeBusy
+            } else {
+                Failure::NodeRefused
+            });
+        }
+        let report: T =
+            serde_json::from_value(response["data"].clone()).context(Failure::InvalidReport)?;
+        validate(&report, &request).context(Failure::InvalidReport)?;
+        let connections = self.inner.connections.read().await;
+        let c = connections.get(node).context(Failure::SessionChanged)?;
+        ensure!(
+            self.grant_session_info(node, c)
+                .context(Failure::SessionChanged)?
+                == before,
+            Failure::SessionChanged
+        );
+        Self::check_pinned_control(c, &request.expected_runtime_id)
+            .context(Failure::SessionChanged)?;
+        Ok(report)
     }
 
     /// Issuer/session selection only, never an execution approval. The caller
@@ -512,6 +589,10 @@ impl NodeServer {
         let c = connections
             .get(node_id)
             .context("Grant node is not connected")?;
+        self.grant_session_info(node_id, c)
+    }
+
+    fn grant_session_info(&self, node_id: &str, c: &Connection) -> Result<Value> {
         self.check_grant_connection(c)?;
         self.check_lease_connection(c)?;
         let issuer = self
@@ -933,7 +1014,7 @@ impl NodeServer {
         observer: Option<Arc<dyn crate::grants::GrantObserver>>,
         lease_deadline: Option<Instant>,
     ) -> Result<Value> {
-        self.invoke_message_with_camera_binding(
+        self.invoke_message_with_pinned_control(
             node_id,
             message,
             wait,
@@ -945,7 +1026,7 @@ impl NodeServer {
         .await
     }
     #[allow(clippy::too_many_arguments)]
-    async fn invoke_message_with_camera_binding(
+    async fn invoke_message_with_pinned_control(
         &self,
         node_id: &str,
         mut message: Value,
@@ -953,7 +1034,7 @@ impl NodeServer {
         grant: Option<crate::grants::ExecutionGrant>,
         observer: Option<Arc<dyn crate::grants::GrantObserver>>,
         lease_deadline: Option<Instant>,
-        camera: Option<CameraControlBinding>,
+        pinned: Option<PinnedControlBinding>,
     ) -> Result<Value> {
         // Start before routing/queue waits. The reviewed driver also supplies
         // its mint-time monotonic deadline, before durable issuance journal I/O.
@@ -980,10 +1061,10 @@ impl NodeServer {
             .get(node_id)
             .cloned()
             .ok_or_else(|| NodeOfflineError(node_id.into()))?;
-        if let Some(binding) = &camera {
-            Self::check_camera_control(&connection, &binding.runtime_id)?;
+        if let Some(binding) = &pinned {
+            Self::check_pinned_control(&connection, &binding.runtime_id)?;
             if connection.session_id != binding.session_id {
-                bail!("Camera setup session changed before dispatch");
+                bail!("Pinned node session changed before dispatch");
             }
         }
         if message["type"] == "grant_receipt"
@@ -4080,6 +4161,53 @@ mod tests {
             },
         );
         (server, receiver)
+    }
+
+    #[tokio::test]
+    async fn passive_source_requests_cannot_dispatch_to_a_replacement_connection() {
+        let (server, mut queue) = queued_test_server().await;
+        let runtime = Uuid::new_v4().to_string();
+        let selected = Uuid::new_v4();
+        {
+            let mut connections = server.inner.connections.write().await;
+            let replacement = connections.get_mut("owner").unwrap();
+            replacement.session_id = Uuid::new_v4();
+            replacement.credential_transport = true;
+            replacement.state = Some(NodeStateSnapshot {
+                registration: json!({"registration_receipt":crate::registration::Offer::new(&runtime).unwrap()}),
+                heartbeat: None,
+                heartbeat_received_at: None,
+            });
+        }
+        for action in [
+            "workload_sources",
+            "camera_workload_sources",
+            "vision_workload_sources",
+        ] {
+            let binding = PinnedControlBinding {
+                session_id: selected,
+                runtime_id: runtime.clone(),
+            };
+            let result = server
+                .invoke_message_with_pinned_control(
+                    "owner",
+                    json!({"type":"request","capability":"node.configure","action":action}),
+                    Duration::from_secs(1),
+                    None,
+                    None,
+                    None,
+                    Some(binding),
+                )
+                .await;
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("session changed before dispatch")
+            );
+            assert!(queue.try_recv().is_err());
+            assert!(server.inner.pending.lock().await.is_empty());
+        }
     }
 
     #[tokio::test]

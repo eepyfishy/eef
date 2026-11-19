@@ -731,7 +731,13 @@ impl crate::Runtime {
             self.node_server
                 .workload_source(&template, 5)
                 .await
-                .inspect_err(|_| failed("source_check"))?;
+                .inspect_err(|error| {
+                    let failure =
+                        error.downcast_ref::<eefn::workload_sources::SourceInspectionFailure>();
+                    tracing::warn!(target: "eef::workload_authoring", job_id = %saved.plan_id,
+                        phase = "source_check", ?failure,
+                        "Workload compilation could not confirm the retained review");
+                })?;
             let (plan, reused) =
                 crate::workload_jobs::compile(&self.engine, &saved, &request.command)
                     .inspect_err(|_| failed("compile_checkpoint"))?;

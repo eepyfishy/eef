@@ -1,10 +1,32 @@
 //! Node-owned source snapshots for review, never capture or execution authority.
 use crate::workload_leases::definition::microphone_resource_digest;
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+
+/// Local diagnostics for an unsuccessful passive source check. These variants
+/// contain no response data, configuration, private binding or endpoint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum SourceInspectionFailure {
+    #[error("Source registration is unavailable")]
+    RegistrationUnavailable,
+    #[error("Source registration is stale")]
+    StaleRegistration,
+    #[error("Source session or runtime changed during inspection")]
+    SessionChanged,
+    #[error("Source inspection exchange was unconfirmed")]
+    ExchangeUnconfirmed,
+    #[error("Source control is busy")]
+    NodeBusy,
+    #[error("Node refused source inspection")]
+    NodeRefused,
+    #[error("Source inspection report is invalid")]
+    InvalidReport,
+    #[error("Source report differs from the exact reviewed binding")]
+    BindingChanged,
+}
 
 /// The reviewed built-in source. Future execution must use these exact bytes,
 /// rather than reopening a path whose contents may change after inspection.
@@ -294,86 +316,45 @@ impl crate::NodeServer {
                     .await?,
             ),
             SourceKind::CameraVision => {
-                let session = self.grant_session(&template.executor_node).await?;
+                let session = self
+                    .grant_session(&template.executor_node)
+                    .await
+                    .context(SourceInspectionFailure::RegistrationUnavailable)?;
                 let report = self
                     .vision_workload_sources(&template.executor_node, freshness_seconds)
                     .await?;
                 let state = self
                     .node_state(&template.executor_node)
                     .await
-                    .ok_or_else(|| anyhow::anyhow!("Vision source registration retired"))?;
+                    .context(SourceInspectionFailure::SessionChanged)?;
                 ensure!(
-                    self.grant_session(&template.executor_node).await? == session,
-                    "Vision source session changed during protocol inspection"
+                    self.grant_session(&template.executor_node)
+                        .await
+                        .context(SourceInspectionFailure::SessionChanged)?
+                        == session,
+                    SourceInspectionFailure::SessionChanged
                 );
-                SourceSnapshot::Vision(VisionSnapshot::from_registered(
-                    report,
-                    &state.registration,
-                )?)
+                SourceSnapshot::Vision(
+                    VisionSnapshot::from_registered(report, &state.registration)
+                        .context(SourceInspectionFailure::InvalidReport)?,
+                )
             }
         };
-        snapshot.confirms_template(template)?;
+        snapshot
+            .confirms_template(template)
+            .context(SourceInspectionFailure::BindingChanged)?;
         Ok(snapshot)
     }
     /// Read from one independently authenticated, pinned live node session.
     /// Callers must also apply their existing origin/disclosure rules.
     pub async fn workload_sources(&self, node: &str, freshness_seconds: u64) -> Result<Report> {
-        use anyhow::Context;
-        use std::{collections::BTreeSet, time::Duration};
-        ensure!(
-            (1..=60).contains(&freshness_seconds),
-            "Invalid source freshness bound"
-        );
-        let before = self.grant_session(node).await?;
-        let (_, age) = self
-            .peer_records(&BTreeSet::from([node.into()]))
-            .await?
-            .pop()
-            .context("Source node is not registered")?;
-        ensure!(
-            age <= Duration::from_secs(freshness_seconds),
-            "Source node registration is stale"
-        );
-        let state = self
-            .node_state(node)
-            .await
-            .context("Source node state unavailable")?;
-        let offer: crate::registration::Offer =
-            serde_json::from_value(state.registration["registration_receipt"].clone())?;
-        offer.validate()?;
-        let request = Request {
-            schema_version: 2,
-            expected_node_id: node.into(),
-            expected_runtime_id: offer.runtime_id,
-        };
-        let response = self
-            .invoke_remote(
-                node,
-                "node.configure",
-                "workload_sources",
-                json!(request),
-                Duration::from_secs(5),
-            )
-            .await?;
-        ensure!(
-            response["success"] == true,
-            "Source node refused inspection"
-        );
-        let report: Report = serde_json::from_value(response["data"].clone())?;
-        report.validate(&request)?;
-        ensure!(
-            self.grant_session(node).await? == before,
-            "Authenticated source session changed during inspection"
-        );
-        let latest = self.node_state(node).await.context("Source node retired")?;
-        let latest: crate::registration::Offer =
-            serde_json::from_value(latest.registration["registration_receipt"].clone())?;
-        latest.validate()?;
-        ensure!(
-            latest.runtime_id == request.expected_runtime_id,
-            "Source runtime changed during inspection"
-        );
-        Ok(report)
+        self.inspect_workload_sources(
+            node,
+            freshness_seconds,
+            crate::workload_leases::definition::SourceKind::MicrophoneEnergy,
+            Report::validate,
+        )
+        .await
     }
 }
 
