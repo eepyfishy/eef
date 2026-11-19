@@ -683,7 +683,7 @@ mod tests {
 
     #[test]
     fn owned_idle_overrides_use_exact_selection_and_keep_independent_timeouts() {
-        let (_directory, service) = fixture();
+        let (directory, service) = fixture();
         let show = || {
             service
                 .model_lifecycle_policy_command(request(PolicyCommand::Show {}, None), false, true)
@@ -704,9 +704,14 @@ mod tests {
                 .inspect(|reply| assert!(confirmed(reply, &request)))
         };
         let mut config = service.read_config().unwrap();
+        let cold_model = directory.path().join("cold.gguf");
+        let hot_model = directory.path().join("hot.gguf");
+        for file in [&cold_model, &hot_model] {
+            std::fs::write(file, b"selection fixture only").unwrap();
+        }
         config["models"]["llamacpp"] = json!({"slots":[
-            {"model_id":"cold","model_path":"cold.gguf","port":8001},
-            {"model_id":"hot","model_path":"hot.gguf","port":8002}
+            {"model_id":"cold","model_path":cold_model,"port":8001},
+            {"model_id":"hot","model_path":hot_model,"port":8002}
         ]});
         config["models"]["ollama"] = json!({"selected":[{"model_id":"shared"}]});
         config["model_lifecycle"] = json!({"idle_unload_seconds":45});
