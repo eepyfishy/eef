@@ -42,6 +42,33 @@ into peer discovery or the model inventory command.
 
 ## Compatibility and current behavior
 
+### Observed owned-model startup (development)
+
+`eef models list --node NODE_ID --json` can include
+`last_successful_owned_load` beside an owned llama.cpp model's metadata.
+The node records one bounded sample for the applied slot at its successful
+readiness handoff. The sample includes schema version, model generation, elapsed
+milliseconds and a timing kind. `single_slot` covers the explicit or on-demand
+load through health and the final authority check. `eager_group` covers the
+whole configured group's startup and carries the same duration for each loaded
+slot. Read an eager sample as group timing.
+
+Where Windows job accounting is available, the sample also includes that slot's
+peak job commit bytes at readiness. This is historical job commit, distinct
+from available host memory, current use and VRAM. The optional measurement is
+omitted on unsupported platforms or when accounting is unavailable. A failed
+or cancelled load creates no sample. A previous successful observation remains
+visible after unloading during the same model runtime. A new runtime starts
+without that history.
+
+This optional sibling leaves `model_metadata` schema 1 intact. Reports omit
+absent, invalid, unsupported-version or shared-backend samples. The allowed
+fields carry neither paths nor process IDs. Inventory reads use existing
+registration evidence and issue no load or inference. The sample is node-reported
+history for inspection. Model rank and admission do not depend on it. Compared
+startup, inference throughput and resource headroom still need verification
+before measured placement can use them. Hosted verification is pending.
+
 <a id="busy-placement-hints-under-verification"></a>
 
 ### Busy placement hints (unreleased)

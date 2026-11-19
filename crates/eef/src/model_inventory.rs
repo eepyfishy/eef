@@ -55,6 +55,9 @@ fn model(node_id: &str, entry: &PeerModel) -> Value {
     if let Some(limit) = entry.job_memory_limit_mib {
         value["job_memory_limit_mib"] = json!(limit);
     }
+    if let Some(sample) = entry.last_successful_owned_load {
+        value["last_successful_owned_load"] = json!(sample);
+    }
     value
 }
 
@@ -187,12 +190,46 @@ mod tests {
         for model in models {
             assert!(model["lifecycle"].is_null());
             assert!(model["resource_estimates"]["ram_mb"].is_null());
+            assert!(model.get("last_successful_owned_load").is_none());
         }
         assert_eq!(
             models[0]["capabilities"],
             json!(["llm.infer", "vlm.analyze"])
         );
     }
+
+    #[test]
+    fn inventory_projects_only_valid_owned_load_observations() {
+        let sample = json!({"schema_version":1,"kind":"single_slot","generation":3,
+            "elapsed_ms":290,"peak_job_commit_bytes_at_ready":8192});
+        let mut private = sample.clone();
+        private["path"] = json!("PRIVATE-PATH");
+        let mut future = sample.clone();
+        future["schema_version"] = json!(2);
+        let mut oversized = sample.clone();
+        oversized["elapsed_ms"] = json!(3_600_001);
+        let peer = PeerRecord::from_registration(&json!({"node_id":"owner","models":[
+            {"model_id":"good","backend":"llamacpp","modality":"text","last_successful_owned_load":sample},
+            {"model_id":"private","backend":"llamacpp","modality":"text","last_successful_owned_load":private},
+            {"model_id":"future","backend":"llamacpp","modality":"text","last_successful_owned_load":future},
+            {"model_id":"oversized","backend":"llamacpp","modality":"text","last_successful_owned_load":oversized},
+            {"model_id":"external","backend":"ollama","modality":"text","last_successful_owned_load":sample}
+        ]})).unwrap();
+        let report = page(vec![(peer, Duration::ZERO)], 30, &query()).unwrap();
+        let models = report["nodes"][0]["models"].as_array().unwrap();
+        assert_eq!(models.len(), 5);
+        for model in models {
+            assert_eq!(model["capabilities"], json!(["llm.infer"]));
+            if model["instance"]["model_id"] == "good" {
+                assert_eq!(model["last_successful_owned_load"], sample);
+                assert!(model["resource_estimates"]["ram_mb"].is_null());
+            } else {
+                assert!(model.get("last_successful_owned_load").is_none());
+            }
+        }
+        assert!(!report.to_string().contains("PRIVATE-PATH"));
+    }
+
     #[test]
     fn filtering_pagination_staleness_and_empty_nodes_are_explicit() {
         let mut q = query();
@@ -218,6 +255,7 @@ mod tests {
         let unknown = PeerModel {
             cpu_threads: None,
             job_memory_limit_mib: None,
+            last_successful_owned_load: None,
             model_id: "unknown".into(),
             backend: None,
             modality: None,
@@ -248,6 +286,7 @@ mod tests {
                 .map(|j| PeerModel {
                     cpu_threads: None,
                     job_memory_limit_mib: None,
+                    last_successful_owned_load: None,
                     model_id: format!("{j:03}{}", "x".repeat(250)),
                     backend: Some("b".repeat(64)),
                     modality: Some("vlm".into()),

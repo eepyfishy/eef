@@ -8,6 +8,7 @@ import {randomUUID} from 'node:crypto';
 export async function verifyOwnedVisionCommands(f) {
  await verifyScenario(f,'complete');
  await verifyScenario(f,'model-exit');
+ console.log('Owned model startup inventory observation passed: eager group timing and per-slot peak commit are published without process identity.');
  console.log('Owned llama.cpp vision command validation passed: explicit projector selection, real synthetic owned process and active pin, no early capture/model call, private local image payload and durable results without replay.');
  console.log('Owned vision model exit validation passed: observed process exit leaves pending analysis evidence, releases active pins and preserves node controls without retry or invented completion.');
  console.log('Node-local model request ceiling validation passed: owner commands save one shared exchange slot, explicit restart applies it, and owned vision completion and model exit release their requests.');
@@ -60,6 +61,16 @@ async function verifyScenario(f,mode) {
  const original=await current();assert.equal(original.owned_pid,Number(await readFile(pid,'utf8')));
  await f.until(async()=>(await route()).candidates.length===1,'owned model initial route');
  assert.equal((await route()).placement_observation.status,'candidates');
+ const inventory=await f.owner(['models','list','--node',f.sourceId]);
+ const owned=inventory.nodes[0].models.find(entry=>entry.instance.model_id===model&&entry.instance.backend==='llamacpp');
+ const load=owned.last_successful_owned_load;
+ assert.equal(load.schema_version,1);
+ assert.equal(load.kind,'eager_group');
+ assert.equal(load.generation,original.generation);
+ assert(Number.isSafeInteger(load.elapsed_ms)&&load.elapsed_ms>=0&&load.elapsed_ms<=3600000);
+ assert(Number.isSafeInteger(load.peak_job_commit_bytes_at_ready)&&load.peak_job_commit_bytes_at_ready>0);
+ assert(load.peak_job_commit_bytes_at_ready<=original.job_accounting.peak_job_commit_bytes);
+ assert.deepEqual(Object.keys(load).sort(),['elapsed_ms','generation','kind','peak_job_commit_bytes_at_ready','schema_version']);
  const passive=await f.sourceCli(['workloads','vision-sources']);assert.equal(passive.configuration_ready,true);
  assert.equal(passive.capture_started,false);assert.equal(passive.model_contacted,false);
  const exists=path=>readFile(path).then(()=>true,()=>false);

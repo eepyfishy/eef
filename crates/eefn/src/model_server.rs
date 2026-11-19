@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::time::Duration;
 
-use crate::model_metadata::{ModelAvailability, ModelLifecycle};
+use crate::model_metadata::{
+    ModelAvailability, ModelLifecycle, OwnedModelLoad, OwnedModelLoadKind,
+};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -158,6 +160,11 @@ mod advertisement_tests {
                 .await
                 .unwrap();
                 assert!(server.can_infer(Some("selected")));
+                assert!(
+                    server.models().unwrap()[0]
+                        .get("last_successful_owned_load")
+                        .is_none()
+                );
                 release.notify_one();
             }
         );
@@ -169,6 +176,16 @@ mod advertisement_tests {
         let generation = server.snapshot().unwrap()[0]["generation"]
             .as_u64()
             .unwrap();
+        let advertised = server.models().unwrap();
+        let sample: OwnedModelLoad =
+            serde_json::from_value(advertised[0]["last_successful_owned_load"].clone()).unwrap();
+        assert!(sample.valid());
+        assert_eq!(sample.kind, OwnedModelLoadKind::SingleSlot);
+        assert_eq!(sample.generation, generation);
+        assert_eq!(
+            sample.peak_job_commit_bytes_at_ready.is_some(),
+            cfg!(windows)
+        );
         assert!(
             server
                 .reserve_control(
@@ -182,6 +199,10 @@ mod advertisement_tests {
         drop(one);
         drop(two);
         assert_eq!(server.snapshot().unwrap()[0]["state"], "warm_idle");
+        server.stop().await.unwrap();
+        let unloaded = server.models().unwrap();
+        assert_eq!(unloaded[0]["model_metadata"]["lifecycle"], "unloaded");
+        assert_eq!(unloaded[0]["last_successful_owned_load"], json!(sample));
         http.await.unwrap();
         drop(guard);
     }
@@ -229,6 +250,11 @@ mod advertisement_tests {
         assert_eq!(row[0]["state"], "error");
         assert_eq!(row[0]["active_requests"], 0);
         assert!(row[0]["owned_pid"].is_null());
+        assert!(
+            server.models().unwrap()[0]
+                .get("last_successful_owned_load")
+                .is_none()
+        );
         http.await.unwrap();
         server.close();
     }
@@ -1078,6 +1104,16 @@ struct OwnedProcess {
     _tree: crate::process_lifetime::ProcessTree,
 }
 impl OwnedProcess {
+    fn peak_job_commit(&self) -> Option<u64> {
+        match self._tree.accounting() {
+            crate::job_accounting::JobAccounting::Available {
+                peak_job_commit_bytes,
+                ..
+            } => Some(peak_job_commit_bytes),
+            _ => None,
+        }
+    }
+
     async fn terminate_until(&mut self, deadline: tokio::time::Instant) -> Result<()> {
         // One deadline covers OS tree observation and root reaping. The job
         // stays owned until both finish; cancellation still closes its handle.
@@ -1118,6 +1154,7 @@ struct SlotResidency {
     active: u32,
     control: Option<String>,
     idle_since: Option<tokio::time::Instant>,
+    last_successful_owned_load: Option<OwnedModelLoad>,
 }
 struct Residency {
     closed: bool,
@@ -1280,6 +1317,7 @@ impl ModelServer {
                             active: 0,
                             control: None,
                             idle_since: None,
+                            last_successful_owned_load: None,
                         },
                     )
                     .is_some()
@@ -1332,9 +1370,17 @@ impl ModelServer {
         self.lifecycle.send_replace(state);
     }
     fn set_all(&self, state: ModelLifecycle) {
+        self.set_group_state(state, None);
+    }
+
+    fn set_group_state(&self, state: ModelLifecycle, eager_started: Option<tokio::time::Instant>) {
         let mut gate = self.residency.lock().unwrap();
+        let eager = eager_started.filter(|_| !gate.closed).map(|started| {
+            let processes = self.processes.lock().unwrap();
+            (started.elapsed(), processes)
+        });
         let empty = gate.slots.is_empty();
-        for slot in gate.slots.values_mut() {
+        for (model, slot) in &mut gate.slots {
             // Group failure/cleanup is not a new observation of a withdrawn
             // job. Preserve its fence, including when it interrupts a stop.
             slot.state = if matches!(
@@ -1349,7 +1395,19 @@ impl ModelServer {
             slot.active = 0;
             slot.control = None;
             slot.idle_since = (slot.state == ModelLifecycle::Ready).then(tokio::time::Instant::now);
+            if slot.state == ModelLifecycle::Ready
+                && let Some((elapsed, processes)) = &eager
+                && let Some(process) = processes.get(model)
+            {
+                slot.last_successful_owned_load = OwnedModelLoad::observed(
+                    OwnedModelLoadKind::EagerGroup,
+                    slot.generation,
+                    *elapsed,
+                    process.peak_job_commit(),
+                );
+            }
         }
+        drop(eager);
         drop(gate);
         if empty {
             self.lifecycle.send_replace(state);
@@ -1629,13 +1687,14 @@ impl ModelServer {
             server: self,
             armed: true,
         };
+        let started = tokio::time::Instant::now();
         let result = tokio::time::timeout(health_timeout, self.start_inner())
             .await
             .context("model startup timed out")
             .and_then(|result| result);
         match &result {
             Ok(()) => {
-                self.set_all(ModelLifecycle::Ready);
+                self.set_group_state(ModelLifecycle::Ready, Some(started));
             }
             Err(_) => {
                 let stopped = self.stop_children().await;
@@ -1931,6 +1990,7 @@ impl ModelServer {
             id: id.into(),
             armed: true,
         };
+        let started = tokio::time::Instant::now();
         let outcome = tokio::time::timeout(timeout, async {
             spawn_authorized(slot)?;
             loop {
@@ -1961,7 +2021,7 @@ impl ModelServer {
             if gate.closed {
                 bail!("model runtime closed before load confirmation")
             }
-            {
+            let peak_job_commit = {
                 let mut processes = self.processes.lock().unwrap();
                 let owned = processes
                     .get_mut(model)
@@ -1969,7 +2029,8 @@ impl ModelServer {
                 if owned.child.try_wait()?.is_some() {
                     bail!("owned model exited before readiness handoff")
                 }
-            }
+                owned.peak_job_commit()
+            };
             let s = gate.slots.get_mut(model).unwrap();
             if s.control.as_deref() != Some(id) {
                 bail!("model load ownership changed")
@@ -1983,6 +2044,12 @@ impl ModelServer {
             s.idle_since = (!pin).then(tokio::time::Instant::now);
             s.control = None;
             let generation = s.generation;
+            s.last_successful_owned_load = OwnedModelLoad::observed(
+                OwnedModelLoadKind::SingleSlot,
+                generation,
+                started.elapsed(),
+                peak_job_commit,
+            );
             cleanup.armed = false;
             drop(gate);
             self.changed();
@@ -2259,9 +2326,8 @@ impl ModelServer {
             .map(|slot| {
                 let mut advertised = slot.advertise()?;
                 let mut metadata = slot.selection_metadata()?;
-                let (state, busy) = gate
-                    .slots
-                    .get(&slot.model_id)
+                let residency = gate.slots.get(&slot.model_id);
+                let (state, busy) = residency
                     .map(|s| (s.state, s.control.is_some() || gate.closed))
                     .unwrap_or((ModelLifecycle::Error, true));
                 // Keep the registration vocabulary compatible with existing
@@ -2288,6 +2354,9 @@ impl ModelServer {
                     },
                 );
                 advertised["model_metadata"] = json!(metadata);
+                if let Some(sample) = residency.and_then(|state| state.last_successful_owned_load) {
+                    advertised["last_successful_owned_load"] = json!(sample);
+                }
                 Ok(advertised)
             })
             .collect()

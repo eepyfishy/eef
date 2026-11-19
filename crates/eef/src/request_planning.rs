@@ -1636,6 +1636,7 @@ pub(crate) mod tests {
         let mut peer = eefn::network::PeerModel {
             cpu_threads: None,
             job_memory_limit_mib: None,
+            last_successful_owned_load: None,
             model_id: "m".into(),
             backend: Some("ollama".into()),
             modality: Some("text".into()),

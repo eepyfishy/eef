@@ -253,6 +253,8 @@ pub struct PeerModel {
     pub cpu_threads: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_memory_limit_mib: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_successful_owned_load: Option<crate::model_metadata::OwnedModelLoad>,
 }
 
 impl PeerModel {
@@ -340,11 +342,25 @@ impl PeerRecord {
                         Ok::<_, anyhow::Error>(metadata)
                     })
                     .transpose()?;
+                let last_successful_owned_load = if model["backend"] == "llamacpp" {
+                    model
+                        .get("last_successful_owned_load")
+                        .and_then(|raw| {
+                            serde_json::from_value::<crate::model_metadata::OwnedModelLoad>(
+                                raw.clone(),
+                            )
+                            .ok()
+                        })
+                        .filter(crate::model_metadata::OwnedModelLoad::valid)
+                } else {
+                    None
+                };
                 models.push(PeerModel {
                     model_id,
                     backend: field(model, "backend", 64)?,
                     modality: field(model, "modality", 64)?,
                     model_metadata,
+                    last_successful_owned_load,
                     job_memory_limit_mib: {
                         let limit: Option<u64> = model
                             .get("job_memory_limit_mib")

@@ -119,6 +119,7 @@ mod tests {
             model_metadata: Some(metadata.clone()),
             cpu_threads: None,
             job_memory_limit_mib: None,
+            last_successful_owned_load: None,
         };
         let mut session = Session {
             fresh_until: std::time::Instant::now() + std::time::Duration::from_secs(30),

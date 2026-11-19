@@ -39,6 +39,50 @@ pub enum ModelAvailability {
     Unavailable,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnedModelLoadKind {
+    SingleSlot,
+    EagerGroup,
+}
+
+/// A previous readiness handoff for one applied local slot. Eager timing covers
+/// the whole group. Job commit is sampled per slot and may be unavailable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnedModelLoad {
+    pub schema_version: u32,
+    pub kind: OwnedModelLoadKind,
+    pub generation: u64,
+    pub elapsed_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_job_commit_bytes_at_ready: Option<u64>,
+}
+
+impl OwnedModelLoad {
+    pub(crate) fn observed(
+        kind: OwnedModelLoadKind,
+        generation: u64,
+        elapsed: std::time::Duration,
+        peak_job_commit_bytes_at_ready: Option<u64>,
+    ) -> Option<Self> {
+        let observation = Self {
+            schema_version: 1,
+            kind,
+            generation,
+            elapsed_ms: u64::try_from(elapsed.as_millis()).ok()?,
+            peak_job_commit_bytes_at_ready,
+        };
+        observation.valid().then_some(observation)
+    }
+
+    pub(crate) fn valid(&self) -> bool {
+        self.schema_version == 1
+            && self.generation > 0
+            && self.elapsed_ms <= crate::model_lifecycle_policy::MAX_LOAD_TIMEOUT_SECONDS * 1000
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceEstimates {

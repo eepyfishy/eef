@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+pub(crate) const MAX_LOAD_TIMEOUT_SECONDS: u64 = 3600;
+
 /// One local gate observation. It provides no reservation or backend stop proof.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -114,7 +116,7 @@ impl ModelLifecyclePolicy {
                 .is_some_and(|n| !(1..=1024).contains(&n))
             || !(1..=4096).contains(&self.receipt_capacity)
             || self.receipt_capacity < self.queue_capacity
-            || !(1..=3600).contains(&self.load_timeout_seconds)
+            || !(1..=MAX_LOAD_TIMEOUT_SECONDS).contains(&self.load_timeout_seconds)
             || !(1..=30).contains(&self.termination_wait_seconds)
             || self
                 .idle_unload_seconds
@@ -314,7 +316,8 @@ impl PolicyRequest {
             if idle_unload_seconds.is_some_and(|n| n > 86400)
                 || queue_capacity.is_some_and(|n| !(1..=64).contains(&n))
                 || receipt_capacity.is_some_and(|n| !(1..=4096).contains(&n))
-                || load_timeout_seconds.is_some_and(|n| !(1..=3600).contains(&n))
+                || load_timeout_seconds
+                    .is_some_and(|n| !(1..=MAX_LOAD_TIMEOUT_SECONDS).contains(&n))
                 || termination_wait_seconds.is_some_and(|n| !(1..=30).contains(&n))
                 || ollama_keep_alive_seconds.is_some_and(|n| !(-1..=86400).contains(&n))
                 || (*ollama_keep_alive_default && ollama_keep_alive_seconds.is_some())
