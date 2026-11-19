@@ -3,7 +3,7 @@ import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile,mkdir,stat} from 'node:fs/promises';
 import {writeFileSync} from 'node:fs';
-import {join,resolve} from 'node:path';
+import {isAbsolute,join,resolve} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
 import {createServer as httpServer} from 'node:http';
@@ -13,14 +13,19 @@ assert.equal(process.platform,'win32','Windows-specific acceptance; never imply 
 const root=resolve(import.meta.dirname,'..'),bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const helper=join(bin,'examples/process-fixture.exe');await stat(helper);
 const scratch=await mkdtemp(join(root,'.validation/process-lifetime-')),children=[],nodes=[];
+const python=process.env.EEF_TEST_PYTHON;
+const captureCases=[
+ {template:'capture_camera',capability:'camera.capture',action:'capture',builtin:'camera.py',params:{device:0}},
+ {template:'record_audio',capability:'audio.capture',action:'record',builtin:'microphone.py',params:{device:0,duration_seconds:1,sample_rate:16000,channels:1}},
+];
 const coordinatorConfig=join(scratch,'eef.yaml');let eef;
 let phase='fixture-created';
 // Private bounded diagnostics for abrupt harness exits, without printing keys.
 process.on('exit',code=>{try{writeFileSync(join(scratch,'PRIVATE-harness-exit.json'),JSON.stringify({code,phase,children:children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()}))}));}catch{}});
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
 const tags=httpServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end('{"models":[]}');});
-function start(exe,args,input,extra={}) {
- const child=spawn(exe,args,{cwd:root,windowsHide:true,env:{...env,...extra},stdio:[input===undefined?'ignore':'pipe','pipe','pipe']});
+function start(exe,args,input,extra={},cwd=root) {
+ const child=spawn(exe,args,{cwd,windowsHide:true,env:{...env,...extra},stdio:[input===undefined?'ignore':'pipe','pipe','pipe']});
  let out='',err='';child.stdout.on('data',b=>out=(out+b).slice(-1048576));child.stderr.on('data',b=>err=(err+b).slice(-1048576));
  child.logs=()=>({out,err});child.result=new Promise((r,j)=>{child.on('error',j);child.on('close',code=>r({code,out,err}));});children.push(child);
  if(input!==undefined){child.stdin.on('error',()=>{});child.stdin.end(input);}return child;
@@ -37,6 +42,22 @@ async function until(fn,label) {const end=Date.now()+20000;while(Date.now()<end)
 async function exists(path){try{await stat(path);return true;}catch{return false;}}
 async function port(){const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 try {
+ if(python){
+  assert(isAbsolute(python)&&(await stat(python)).isFile(),'Use an explicit fixture interpreter');
+  for(const capture of captureCases){
+   assert.equal(await exists(join(bin,'python/plugins',capture.builtin)),false,'Use a build without packaged device adapters');
+   capture.dir=join(scratch,capture.template);
+   capture.plugin=join(capture.dir,'synthetic.py');
+   await mkdir(capture.dir);
+   await writeFile(capture.plugin,`import pathlib, subprocess
+CAPABILITY = ${JSON.stringify(capture.capability)}
+ACTIONS = [${JSON.stringify(capture.action)}]
+def handle(action, params):
+    subprocess.run([${JSON.stringify(helper)}, 'loop', str(pathlib.Path(__file__).parent)], check=True)
+    return {'synthetic': True}
+`);
+  }
+ }
  await new Promise(r=>tags.listen(0,'127.0.0.1',r));const [api,gateway]=await Promise.all([port(),port()]);eef=`http://127.0.0.1:${api}`;
  const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
  await writeFile(coordinatorConfig,yaml);start(join(bin,'eef.exe'),['--config',coordinatorConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(24).toString('hex')});
@@ -47,8 +68,15 @@ try {
   const config=join(scratch,label+'.json'),id='process-fixture-'+label,apiPort=await port(),value=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
   Object.assign(value,{node_id:id,name:'Native process fixture '+label,connection_enabled:false,auto_local:false,local_pairing:false,endpoints:[],psk:'',heartbeat_seconds:0.5,
    dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:apiPort},update:{policy:'off'},models:{provider:'llamacpp',ollama:{base_url:`http://127.0.0.1:${tags.address().port}`,selected:[]},llamacpp:{slots:[]}}});
+  const captureExecutor=label==='executor'&&python;
   if(label==='executor')Object.assign(value.permissions.process,{enabled:true,allowed_executables:[helper],max_seconds:30,max_output_bytes:65536});
-  await writeFile(config,JSON.stringify(value));const nodeProcess=start(join(bin,'eefn.exe'),['--config',config,'--no-ui']);const node={id,config,process:nodeProcess,url:`http://127.0.0.1:${apiPort}`};nodes.push(node);
+  if(captureExecutor){
+   value.python=python;
+   value.python_plugins=captureCases.map(capture=>capture.plugin);
+   value.python_bridge={timeout_seconds:15,max_request_bytes:65536,max_stdout_bytes:16384,max_stderr_bytes:4096};
+   Object.assign(value.permissions.media,{camera:true,microphone:true});
+  }
+  await writeFile(config,JSON.stringify(value));const nodeProcess=start(join(bin,'eefn.exe'),['--config',config,'--no-ui'],undefined,{},captureExecutor?scratch:root);const node={id,config,process:nodeProcess,url:`http://127.0.0.1:${apiPort}`};nodes.push(node);
   await until(async()=>{try{return (await json(node.url+'/api/diagnostics')).connection_state==='paused';}catch{return false;}},'paused node');
   const invitation=await owner(['credentials','provision','--node',id,'--address',`127.0.0.1:${gateway}`]);await local(node,['connection','pair-stdin'],JSON.stringify(invitation));
  }
@@ -62,6 +90,79 @@ try {
  runtime=(await json(eef+'/api/diagnostics')).runtime_id;await owner(['restart']);
  await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==runtime&&(await json(eef+'/api/diagnostics')).registered_node_count===2,'apply directional discovery');
  const outcomes=[];let retainedStop;
+ if(python){
+  await until(async()=>{
+   const {capabilities}=await json(executor.url+'/api/status');
+   return captureCases.every(capture=>capabilities.includes(capture.capability));
+  },'synthetic camera and microphone providers loaded');
+  for(const capture of captureCases){
+   phase='public-stop-'+capture.template;
+   const {template,capability,action,params,dir}=capture;
+   const pids=join(dir,'pids.json');
+   const plan=await review.save({template,constraints:{node_id:executor.id},params});
+   assert.equal(plan.tasks.length,1);
+   assert.equal(plan.tasks[0].capability,capability);
+   assert.equal(plan.bindings[0].node_id,executor.id);
+   const command=await review.approve(plan,{max_execution_ms:12000,max_result_bytes:8192});
+   assert.equal(await exists(pids),false,'approval alone cannot start capture');
+   await review.start(command);
+   await until(async()=>{
+    const identities=JSON.parse(await readFile(pids,'utf8'));
+    return identities.root.pid&&identities.child.pid;
+   },'synthetic capture owns live descendants');
+   const identities=await readFile(pids,'utf8');
+   const observer=start(helper,['observe',dir]);
+   await until(()=>exists(join(dir,'observer-ready')),'creation-verified capture descendants held');
+   const stop=await local(origin,['jobs','stop',plan.id]);
+   assert.equal(stop.success,true);
+   const observed=await observer.result;
+   assert.equal(observed.code,0);
+   const proof=JSON.parse(observed.out);
+   assert.equal(proof.both_exited,true);
+   assert.equal(proof.held_creation_verified_handles,true);
+   assert(proof.observed_after_ms<5000,'capture stop must precede the original deadline');
+   const report=await review.result(plan.id);
+   assert.equal(report.state,'completed');
+   assert.equal(report.success,false);
+   assert.equal(report.persisted,true);
+   assert.equal(report.error_code,'capture_owned_processes_stopped');
+   assert.deepEqual(Object.keys(report.data),['process_stop_observation']);
+   const observation=report.data.process_stop_observation;
+   assert.equal(observation.owned_process_tree_empty,true);
+   assert.equal(observation.external_effects_stopped,false);
+   assert.equal(observation.finished_actions_undone,false);
+   await until(async()=>!!(await review.inspect(plan.id)).execution.attempts[0].stop?.report?.persisted,'exact capture stop receipt retained');
+   const before=await review.inspect(plan.id),attempt=before.execution.attempts[0];
+   assert.equal(before.execution.attempts.length,1);
+   assert.equal(attempt.grant.action,action);
+   assert.equal(attempt.stop.report.execution_stopped,false);
+   assert.equal(attempt.stop.report.external_effects_stopped,false);
+   const journal=executor.config+'.grant-receipts.sqlite3',bytes=await readFile(journal);
+   const fromOrigin=await local(origin,['jobs','stop-status',plan.id]);
+   assert.equal(fromOrigin.success,true);
+   const status=fromOrigin.data;
+   assert.deepEqual(status,await owner(['requests','stop-status',plan.id]));
+   assert.equal(status.stop_requested,true);
+   assert.equal(status.read_only,true);
+   assert.equal(status.issued_attempts,1);
+   assert.equal(status.grants.length,1);
+   assert.equal(status.not_inspected_issued_attempts,0);
+   assert.equal(status.grants[0].scope.grant_id,attempt.grant.grant_id);
+   assert.equal(status.grants[0].scope.session_id,attempt.grant.session_id);
+   assert.equal(status.grants[0].availability,'owned_process_tree_empty');
+   assert.equal(status.grants[0].intent_recorded,true);
+   assert.deepEqual(status.grants[0].observation,observation);
+   for(const flag of ['execution_requested','stop_signal_sent','automatically_retried','reconciled','external_effects_stopped','finished_actions_undone'])assert.equal(status[flag],false);
+   assert(!JSON.stringify(status).includes(dir));
+   const denied=await cli('eefn',executor.config,['jobs','stop-status',plan.id],undefined,1);
+   assert.equal(denied.success,false);
+   assert.deepEqual(await review.inspect(plan.id),before);
+   assert.deepEqual(await readFile(journal),bytes);
+   assert.equal(await readFile(pids,'utf8'),identities);
+   outcomes.push({capture_stop:capability,creation_verified_descendants_exited:true,retained_observation:true,origin_and_owner_status:true,wrong_origin_denied:true,read_only:true});
+  }
+  console.log('Public camera and microphone stop observations passed');
+ }
  for(const scenario of [{label:'complete',mode:'complete',seconds:20,grantMs:8000},{label:'nonzero-exit',mode:'fail',seconds:20,grantMs:8000},{label:'process-timeout',mode:'loop',seconds:2,grantMs:8000},{label:'grant-deadline',mode:'loop',seconds:20,grantMs:3000},{label:'origin-stop',mode:'loop',seconds:20,grantMs:10000},{label:'coordinator-stop',mode:'loop',seconds:20,grantMs:10000},{label:'permission-revoked',mode:'loop',seconds:20,grantMs:10000},{label:'node-restart',mode:'loop',seconds:20,grantMs:10000},{label:'coordinator-restart',mode:'loop',seconds:20,grantMs:10000}]) {
   phase='scenario-'+scenario.label;
   const dir=join(scratch,scenario.label);await mkdir(dir);
@@ -236,7 +337,7 @@ try {
  assert.equal(unavailable.grants[0].availability,'unavailable');assert.equal(unavailable.grants[0].observation,null);
  assert.equal(unavailable.execution_requested,false);assert.equal(unavailable.stop_signal_sent,false);
  outcomes.push({offline_executor_runtime_absent:true,retained_intent_read:true,no_journal_write:true});
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,typed_file_free_process_authoring:true,source_receipt_reuse_no_execution:true,no_models:true,no_ui_controller:true,pinned_tls_two_logical_nodes:true,physical_two_pc:false,separate_origin_and_executor:true,owned_process_stop_observation:true,job_id_only_read_only_status:true,status_after_reconnect:true,offline_unconfirmed_not_stopped:true,v1_external_effect_guarantees_unchanged:true,outcomes},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,typed_file_free_process_authoring:true,source_receipt_reuse_no_execution:true,no_models:true,no_ui_controller:true,pinned_tls_two_logical_nodes:true,physical_two_pc:false,separate_origin_and_executor:true,owned_process_stop_observation:true,public_synthetic_capture_stop_observation:!!python,job_id_only_read_only_status:true,status_after_reconnect:true,offline_unconfirmed_not_stopped:true,v1_external_effect_guarantees_unchanged:true,outcomes},null,2));
  phase='passed';
  console.log('Public process lifetime validation passed: '+scratch);
 }catch(error){
