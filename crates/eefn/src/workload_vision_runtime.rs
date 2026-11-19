@@ -118,13 +118,14 @@ impl PreparedSource {
         let runtime = self.runtime_id.clone();
         let listening_epoch = self.listening_epoch;
         let observer = Arc::new(tokio::sync::Mutex::new(observe));
+        let (reservation, cancelled_exit) = consumed.observe_capture_stop(self.reservation);
         let operation = Box::pin(self.python.observe_reserved_vision(
             &self.source,
             self.params,
             &self.definition.grant_id,
             prepared.bounds.clone(),
             deadline,
-            self.reservation,
+            reservation,
             move |observation| {
                 let parameters = parameters.clone();
                 let writer = writer.clone();
@@ -240,7 +241,11 @@ impl PreparedSource {
             Box::pin(versioned),
         ));
         Box::pin(
-            policy_permit.supervise(Box::pin(consumed.supervise_observed(renewals, controlled))),
+            policy_permit.supervise(Box::pin(consumed.supervise_observed(
+                renewals,
+                controlled,
+                cancelled_exit,
+            ))),
         )
         .await
     }

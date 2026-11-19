@@ -2,7 +2,9 @@
 //! This excludes our competing sources, not other applications or device drivers.
 use anyhow::{Result, bail, ensure};
 use std::sync::Arc;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot, watch};
+
+pub(crate) const EXIT_OBSERVATION_BUDGET: std::time::Duration = std::time::Duration::from_secs(3);
 
 #[derive(Clone)]
 pub(crate) struct Pool(Arc<Semaphore>, &'static str);
@@ -25,12 +27,26 @@ impl Pool {
                 self.1
             )
         })?;
-        Ok(Reservation(permit))
+        Ok(Reservation(permit, None))
     }
 }
 
 // Unarmed reservations have started no process and release normally on Drop.
-pub(crate) struct Reservation(OwnedSemaphorePermit);
+pub(crate) struct Reservation(OwnedSemaphorePermit, Option<ExitReporter>);
+
+struct ExitReporter {
+    stop: watch::Receiver<bool>,
+    reply: oneshot::Sender<CancelledExit>,
+}
+
+/// Created only by this capture's cleanup after the owned tree is observed to
+/// have exited. Holds metadata only and cannot keep OS handles alive.
+pub(crate) struct CancelledExit(crate::process_stop::Observation);
+impl CancelledExit {
+    pub(crate) fn into_observation(self) -> crate::process_stop::Observation {
+        self.0
+    }
+}
 struct Quarantined(Option<OwnedSemaphorePermit>);
 impl Quarantined {
     fn release_after_observation(mut self) {
@@ -48,12 +64,23 @@ impl Drop for Quarantined {
 pub(crate) struct OwnedCapture {
     tree: Arc<crate::process_lifetime::ProcessTree>,
     reservation: Option<Quarantined>,
+    cancelled_exit: Option<ExitReporter>,
 }
 impl Reservation {
+    pub(crate) fn observe_cancelled_exit(
+        mut self,
+        stop: watch::Receiver<bool>,
+    ) -> (Self, oneshot::Receiver<CancelledExit>) {
+        let (send, receive) = oneshot::channel();
+        self.1 = Some(ExitReporter { stop, reply: send });
+        (self, receive)
+    }
+
     pub(crate) fn bind(self, tree: Arc<crate::process_lifetime::ProcessTree>) -> OwnedCapture {
         OwnedCapture {
             tree,
             reservation: Some(Quarantined(Some(self.0))),
+            cancelled_exit: self.1,
         }
     }
 }
@@ -84,9 +111,7 @@ impl OwnedCapture {
             // source's execution deadline or permits further source work.
             let exit = self
                 .tree
-                .terminate_and_witness_until(
-                    tokio::time::Instant::now() + std::time::Duration::from_secs(3),
-                )
+                .terminate_and_witness_until(tokio::time::Instant::now() + EXIT_OBSERVATION_BUDGET)
                 .await?;
             self.observed_exit(&exit)?;
             Ok(())
@@ -100,6 +125,11 @@ impl Drop for OwnedCapture {
         let Some(reservation) = self.reservation.take() else {
             return;
         };
+        let cancelled_exit = self
+            .cancelled_exit
+            .take()
+            .filter(|reporter| *reporter.stop.borrow())
+            .map(|reporter| reporter.reply);
         #[cfg(windows)]
         {
             // Synchronous termination request precedes any final journal write.
@@ -109,12 +139,16 @@ impl Drop for OwnedCapture {
                 runtime.spawn(async move {
                     if tree
                         .observe_owned_exit_until(
-                            tokio::time::Instant::now() + std::time::Duration::from_secs(3),
+                            tokio::time::Instant::now() + EXIT_OBSERVATION_BUDGET,
                         )
                         .await
                         .is_ok()
                     {
                         reservation.release_after_observation();
+                        if let Some(sender) = cancelled_exit {
+                            let _ = sender
+                                .send(CancelledExit(crate::process_stop::Observation::observed()));
+                        }
                     }
                     // Failure, task abort and runtime shutdown quarantine it.
                 });
@@ -122,7 +156,7 @@ impl Drop for OwnedCapture {
             // Without a runtime the reservation is quarantined on Drop.
         }
         #[cfg(not(windows))]
-        drop(reservation);
+        drop((reservation, cancelled_exit));
     }
 }
 

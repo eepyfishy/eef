@@ -276,6 +276,62 @@ async fn cancelling_whole_consumed_task_drops_source_before_persisting_uncertain
 }
 
 #[tokio::test]
+async fn retained_exit_requires_exact_stop_intent_and_an_intact_record() {
+    for stopped in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("receipts.db");
+        let ledger = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+        let d = definition();
+        let consumed = consume(&ledger, d.clone()).await.unwrap();
+        let observed_at_ms = if stopped {
+            ledger
+                .request_stop_scope(&d.scope().unwrap(), &d.issuer_id, &d.session_id, "owner")
+                .unwrap()
+                .recorded_at_ms
+        } else {
+            crate::protocol::now_ms().max(1)
+        };
+        // Synthetic metadata tests the journal only. Native tests exercise the
+        // separate source of the actual Windows process exit observation.
+        let observation = serde_json::from_value(json!({
+            "schema_version":1,"kind":"owned_process_tree_empty_after_stop_request",
+            "mode":"windows_owned_job","observed_at_ms":observed_at_ms,
+            "stop_requested":true,"owned_process_tree_empty":true,
+            "external_effects_stopped":false,"finished_actions_undone":false
+        }))
+        .unwrap();
+        consumed
+            .retire_with_observation(Some(observation))
+            .await
+            .unwrap();
+        drop(ledger);
+        let reopened = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+        let history = reopened
+            .workload_events(&d.issuer_id, &d.grant_id, 0, 1)
+            .unwrap();
+        assert_eq!(history["state"], "unknown");
+        assert_eq!(history["source_termination_confirmed"], false);
+        assert_eq!(
+            history.get("owned_process_stop_observation").is_some(),
+            stopped
+        );
+        drop(reopened);
+        if stopped {
+            let db = Connection::open(&path).unwrap();
+            db.execute(
+                "UPDATE execution_workload_stop_exits SET report_sha256=?1",
+                ["0".repeat(64)],
+            )
+            .unwrap();
+            drop(db);
+            let before = std::fs::read(&path).unwrap();
+            assert!(GrantLedger::open(&path, Default::default(), "owner").is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+    }
+}
+
+#[tokio::test]
 async fn retired_consumption_never_polls_a_prepared_source_again() {
     use std::sync::atomic::Ordering::SeqCst;
     let dir = tempfile::tempdir().unwrap();

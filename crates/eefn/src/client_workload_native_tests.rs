@@ -270,6 +270,19 @@ async fn actual_credential_tls_node_source_completes_stops_and_refreshes_policy_
                 "unknown"
             }
         );
+        let history = ledger
+            .workload_events(&d.issuer_id, &d.grant_id, 0, 100)
+            .unwrap();
+        assert_eq!(history["source_termination_confirmed"], false);
+        if mode == "blocked" {
+            let observation: crate::process_stop::Observation =
+                serde_json::from_value(history["owned_process_stop_observation"].clone()).unwrap();
+            observation.validate().unwrap();
+            assert!(processes.as_ref().unwrap().exited_now());
+            assert!(retained.completion.is_none());
+        } else {
+            assert!(history.get("owned_process_stop_observation").is_none());
+        }
         network_source_policy(&f, false);
         timeout(Duration::from_secs(5), async {
             loop {

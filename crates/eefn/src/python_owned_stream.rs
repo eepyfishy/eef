@@ -90,7 +90,8 @@ impl PythonRuntime {
         .map_err(|_| anyhow::Error::from(BridgeFailure::Deadline))
         .and_then(|v| v);
         // Keep the original cleanup boundary, including malformed output and
-        // failed consumers. Cancellation Drop cannot mint an exit witness.
+        // failed consumers. Cancellation leaves exit observation to the owned
+        // capture cleanup when this runtime can still observe it.
         if outcome.is_err() {
             if let Some(capture) = &mut capture {
                 let _ = capture.retire().await;

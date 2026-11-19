@@ -79,6 +79,10 @@ async fn native_unknown(f: &Fixture, ledger: &crate::grants::GrantLedger) {
     assert_eq!(receipt.definition, f.definition);
     assert_eq!(receipt.receipt.state, "unknown");
     assert!(!receipt.execution_authorized && !receipt.restart_authorized);
+    assert!(
+        ledger.workload_events(&f.definition.issuer_id, &f.definition.grant_id, 0, 128).unwrap()
+            .get("owned_process_stop_observation").is_none()
+    );
 }
 
 #[tokio::test]

@@ -16,6 +16,8 @@ mod completion;
 mod event_journal;
 #[path = "workload_finalization.rs"]
 mod finalization;
+#[path = "workload_stop_observation.rs"]
+mod stop_observation;
 #[path = "workload_vision_journal.rs"]
 pub(crate) mod vision;
 pub use completion::{Report as CompletionReport, VisionSummary};
@@ -28,7 +30,8 @@ pub(crate) fn event_reserved(db: &Connection) -> Result<usize> {
 }
 pub(crate) fn validate_event_orphans(db: &Connection) -> Result<()> {
     event_journal::audit_orphans(db)?;
-    vision::audit_orphans(db)
+    vision::audit_orphans(db)?;
+    stop_observation::audit_orphans(db)
 }
 
 pub(crate) fn validate_schema(db: &Connection, version: i64) -> Result<()> {
@@ -142,6 +145,7 @@ pub(crate) fn read(db: &Connection, node: &str, issuer: Option<&str>, id: &str) 
     let result = read_core(db, node, issuer, id)?;
     event_journal::audit(db, &result)?;
     vision::audit(db, &result)?;
+    stop_observation::read(db, &result)?;
     Ok(result)
 }
 fn read_core(db: &Connection, node: &str, issuer: Option<&str>, id: &str) -> Result<Receipt> {
@@ -207,15 +211,33 @@ impl<F> Drop for Running<F> {
     }
 }
 impl Consumption {
-    pub(crate) async fn retire(mut self) -> Result<()> {
+    pub(crate) fn observe_capture_stop(
+        &self,
+        reservation: crate::capture_ownership::Reservation,
+    ) -> (
+        crate::capture_ownership::Reservation,
+        tokio::sync::oneshot::Receiver<crate::capture_ownership::CancelledExit>,
+    ) {
+        reservation.observe_cancelled_exit(self.stop.receiver.clone())
+    }
+    pub(crate) async fn retire(self) -> Result<()> {
+        self.retire_with_observation(None).await
+    }
+    async fn retire_with_observation(
+        mut self,
+        observation: Option<crate::process_stop::Observation>,
+    ) -> Result<()> {
         self.reporting.retire();
         let slot = self
             .final_slot
             .take()
             .context("Workload final checkpoint already delegated")?;
-        finalization::start(&self.ledger, self.contract.scope.clone(), slot)?
-            .wait()
-            .await
+        let scope = self.contract.scope.clone();
+        finalization::start_with(&self.ledger, slot, move |journal| {
+            journal.finish_workload_unknown(&scope, observation)
+        })?
+        .wait()
+        .await
     }
     #[cfg(test)]
     pub(crate) fn event_writer(&self) -> Result<EventWriter> {
@@ -285,7 +307,7 @@ impl Consumption {
     where
         F: std::future::Future<Output = Result<T>>,
     {
-        let (consumed, finished) = self.drive(renewals, operation).await?;
+        let (consumed, finished) = self.drive(renewals, operation, None).await?;
         consumed.retire().await?;
         Ok(finished.value)
     }
@@ -293,11 +315,14 @@ impl Consumption {
         self,
         renewals: crate::workload_leases::Renewals,
         operation: F,
+        cancelled_exit: tokio::sync::oneshot::Receiver<crate::capture_ownership::CancelledExit>,
     ) -> Result<Receipt>
     where
         F: std::future::Future<Output = Result<crate::workload_runtime::ObservedWorkload>>,
     {
-        let (mut consumed, finished) = self.drive(renewals, operation).await?;
+        let (mut consumed, finished) = self
+            .drive(renewals, operation, Some(cancelled_exit))
+            .await?;
         let evidence = completion::Evidence::from_observed(
             consumed.contract.clone(),
             finished.boundary,
@@ -319,6 +344,9 @@ impl Consumption {
         self,
         renewals: crate::workload_leases::Renewals,
         operation: F,
+        cancelled_exit: Option<
+            tokio::sync::oneshot::Receiver<crate::capture_ownership::CancelledExit>,
+        >,
     ) -> Result<(Self, crate::workload_leases::Finished<T>)>
     where
         F: std::future::Future<Output = Result<T>>,
@@ -363,12 +391,25 @@ impl Consumption {
                 }
             }
         };
-        // Drop the exact source and reporting window before starting any save.
+        let observed_stop =
+            result.is_err() && *running.consumption.as_ref().unwrap().stop.receiver.borrow();
+        // Drop the exact source and reporting window before any cleanup wait
+        // or save. The wait can only observe the already retired capture.
         drop(running.operation.take());
         let consumed = running.consumption.take().unwrap();
         match result {
             Err(error) => {
-                let _ = consumed.retire().await;
+                consumed.reporting.retire();
+                let observation = if observed_stop && let Some(exit) = cancelled_exit {
+                    tokio::time::timeout(crate::capture_ownership::EXIT_OBSERVATION_BUDGET, exit)
+                        .await
+                        .ok()
+                        .and_then(|reply| reply.ok())
+                        .map(crate::capture_ownership::CancelledExit::into_observation)
+                } else {
+                    None
+                };
+                let _ = Box::pin(consumed.retire_with_observation(observation)).await;
                 Err(error)
             }
             Ok(finished) => Ok((consumed, finished)),
@@ -411,7 +452,10 @@ impl GrantLedger {
         let tx = db.unchecked_transaction()?;
         let receipt = read_core(&tx, &self.node_id, Some(issuer), id)?;
         vision::audit(&tx, &receipt)?;
-        let value = event_journal::inspect(&tx, &receipt, after, limit)?;
+        let mut value = event_journal::inspect(&tx, &receipt, after, limit)?;
+        if let Some(observation) = stop_observation::read(&tx, &receipt)? {
+            value["owned_process_stop_observation"] = json!(observation);
+        }
         tx.commit()?;
         Ok(value)
     }
@@ -426,6 +470,14 @@ impl GrantLedger {
         Ok(result)
     }
     fn mark_workload_unknown(&self, scope: &stop::Scope) -> Result<()> {
+        self.finish_workload_unknown(scope, None)
+    }
+
+    fn finish_workload_unknown(
+        &self,
+        scope: &stop::Scope,
+        observation: Option<crate::process_stop::Observation>,
+    ) -> Result<()> {
         let db = self
             .connection
             .lock()
@@ -435,8 +487,13 @@ impl GrantLedger {
         if saved.definition.scope()? != *scope {
             bail!("Workload consumption scope changed")
         }
-        tx.execute("UPDATE execution_receipts SET state='unknown',updated_ms=max(updated_ms,accepted_ms,?3) WHERE grant_id=?1 AND grant_digest=?2 AND receipt_kind='workload' AND state='accepted'",
+        let changed = tx.execute("UPDATE execution_receipts SET state='unknown',updated_ms=max(updated_ms,accepted_ms,?3) WHERE grant_id=?1 AND grant_digest=?2 AND receipt_kind='workload' AND state='accepted'",
             params![scope.grant_id,scope.grant_sha256,i64::try_from(crate::protocol::now_ms().max(1))?])?;
+        if changed == 1
+            && let Some(observation) = observation
+        {
+            stop_observation::save(&tx, scope, &observation)?;
+        }
         tx.commit()?;
         Ok(())
     }

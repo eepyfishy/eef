@@ -315,6 +315,7 @@ impl PreparedSource {
         let reporting_contract = self.definition.lease_contract()?;
         let writer = Arc::new(consumed.event_writer_from_ack(receipt)?);
         let observer = Arc::new(tokio::sync::Mutex::new(observe));
+        let (reservation, cancelled_exit) = consumed.observe_capture_stop(self.reservation);
         // Keep transport and each supervisory layer out of its parent's async
         // state. Debug Windows threads have bounded stacks; growing the final
         // receipt must not multiply nested transport/control frames.
@@ -325,7 +326,7 @@ impl PreparedSource {
             &self.definition.grant_id,
             self.bounds,
             deadline,
-            self.reservation,
+            reservation,
             move |observation| {
                 let pending = events
                     .lock()
@@ -395,7 +396,7 @@ impl PreparedSource {
                 operation,
             ))
         };
-        Box::pin(consumed.supervise_observed(renewals, controlled)).await
+        Box::pin(consumed.supervise_observed(renewals, controlled, cancelled_exit)).await
     }
 }
 

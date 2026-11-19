@@ -109,3 +109,21 @@ runtime, failure denial, reserved capacity and post-consumption stop-registratio
 failure. Existing cancellation tests now also require the runtime to exit while
 storage is still blocked. These asynchronous-finalization changes require their
 own hosted verification; local checks run formatting and source guards only.
+
+## Owned capture exit after an explicit stop
+
+The node's retained workload event reader can include
+`owned_process_stop_observation`. The Windows capture cleanup must have observed
+exit of the exact owned process tree after the original stop was recorded. The
+node saves the observation with the transition to `unknown` in its existing
+journal and checks the original stop, grant scope and checksum when reading it.
+The original stop receipt remains intent-only. The workload stays `unknown` and
+`source_termination_confirmed` remains false. Device buffers and external effects
+are outside this observation. The node never replays the workload to obtain it.
+
+The optional record can be missing when capture never started, cleanup could
+not be observed, the task or runtime was dropped, or storage was unavailable.
+The cleanup wait begins after live authority retires and uses the existing
+three-second observation budget. Ordinary completion and policy-only revocation
+do not produce this record. This path is internal to the retained node reader.
+Command access and physical validation remain open.

@@ -330,6 +330,19 @@ async fn actual_camera_workload_negotiates_exact_source_persists_events_and_with
                 "unknown"
             }
         );
+        let history = ledger
+            .workload_events(&d.issuer_id, &d.grant_id, 0, 100)
+            .unwrap();
+        assert_eq!(history["source_termination_confirmed"], false);
+        if mode == "blocked" {
+            let observation: crate::process_stop::Observation =
+                serde_json::from_value(history["owned_process_stop_observation"].clone()).unwrap();
+            observation.validate().unwrap();
+            assert!(processes.as_ref().unwrap().exited_now());
+            assert!(retained.completion.is_none());
+        } else {
+            assert!(history.get("owned_process_stop_observation").is_none());
+        }
         let mut config = f.service.read_config().unwrap();
         config["permissions"]["media"]["camera"] = json!(false);
         f.service.save_configuration(config).unwrap();

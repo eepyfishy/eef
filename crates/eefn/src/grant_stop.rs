@@ -194,7 +194,7 @@ fn initialize(db: &Connection) -> Result<()> {
     }
     Ok(())
 }
-fn read(db: &Connection, id: &str) -> Result<Option<Report>> {
+pub(super) fn read(db: &Connection, id: &str) -> Result<Option<Report>> {
     if !available(db)? {
         return Ok(None);
     }
