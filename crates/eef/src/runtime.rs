@@ -631,7 +631,7 @@ impl Runtime {
             .and_then(Value::as_f64)
             .unwrap_or(0.0)
             .max(load.get("ram").and_then(Value::as_f64).unwrap_or(0.0));
-        let latency = message
+        let collection_ms = message
             .get("latency_ms")
             .and_then(Value::as_f64)
             .unwrap_or(0.0);
@@ -639,15 +639,15 @@ impl Runtime {
         self.registry.update_metrics_at(
             node_id,
             combined,
-            latency,
+            collection_ms,
             specs,
             message["gateway_received_ms"].as_u64().unwrap_or(0),
         );
         self.model_registry
-            .update_metrics(node_id, combined, latency);
+            .update_metrics(node_id, combined, collection_ms);
         self.publish_or_observe_node(
             "node.updated",
-            json!({"node_id": node_id, "load": combined, "latency_ms": latency}),
+            json!({"node_id": node_id, "load": combined, "latency_ms": collection_ms}),
             publish,
         )
         .await;

@@ -141,7 +141,6 @@ impl RouteQuery {
 struct RegistryState {
     models: BTreeMap<String, Vec<ModelSpec>>,
     loads: HashMap<String, f64>,
-    latencies: HashMap<String, f64>,
     request_admission: HashMap<String, eefn::model_lifecycle_policy::RequestAdmission>,
 }
 
@@ -255,7 +254,6 @@ impl ModelRegistry {
             !specs.is_empty()
         });
         state.loads.remove(node_id);
-        state.latencies.remove(node_id);
         state.request_admission.remove(node_id);
     }
 
@@ -269,15 +267,15 @@ impl ModelRegistry {
             .flatten()
             .map(|spec| spec.node_id.clone())
             .chain(state.loads.keys().cloned())
-            .chain(state.latencies.keys().cloned())
             .chain(state.request_admission.keys().cloned())
             .collect()
     }
 
-    pub fn update_metrics(&self, node_id: &str, load: f64, latency: f64) {
+    /// Retain the legacy API parameter for heartbeat collection time.
+    /// It supplies no evidence of model speed or network round-trip time.
+    pub fn update_metrics(&self, node_id: &str, load: f64, _collection_ms: f64) {
         let mut state = self.state.write().expect("model lock");
         state.loads.insert(node_id.into(), load.clamp(0.0, 1.0));
-        state.latencies.insert(node_id.into(), latency.max(0.0));
     }
 
     pub fn list(&self) -> Vec<ModelSpec> {
@@ -480,8 +478,7 @@ fn model_score(spec: &ModelSpec, state: &RegistryState) -> f64 {
         0.0
     };
     let load = 1.0 - state.loads.get(&spec.node_id).copied().unwrap_or(0.0);
-    let latency = 1.0 / (1.0 + state.latencies.get(&spec.node_id).copied().unwrap_or(0.0) / 100.0);
-    warm * 2.0 + load * 0.4 + latency * 0.6
+    warm * 2.0 + load * 0.4
 }
 
 #[derive(Clone)]
@@ -1208,7 +1205,7 @@ mod tests {
     }
 
     #[test]
-    fn load_routing_uses_live_node_metrics() {
+    fn routing_uses_load_without_treating_heartbeat_collection_time_as_latency() {
         let registry = ModelRegistry::default();
         for node in ["busy", "idle"] {
             registry.register(ModelSpec {
@@ -1225,8 +1222,8 @@ mod tests {
                 model_metadata: None,
             });
         }
-        registry.update_metrics("busy", 0.9, 0.0);
-        registry.update_metrics("idle", 0.1, 0.0);
+        registry.update_metrics("busy", 0.9, 1.0);
+        registry.update_metrics("idle", 0.1, 1000.0);
         let route = registry.route(
             &ModelRequest {
                 modality: Modality::Text,

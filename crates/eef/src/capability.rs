@@ -5,7 +5,6 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const W_LATENCY: f64 = 0.4;
 const W_LOAD: f64 = 0.3;
 const W_CAPABILITY: f64 = 0.2;
 const W_POWER: f64 = 0.1;
@@ -59,6 +58,7 @@ pub struct CapabilityProvider {
     pub node_specs: NodeSpecs,
     #[serde(default)]
     pub load: f64,
+    /// Legacy heartbeat telemetry collection time, not network round-trip time.
     #[serde(default)]
     pub latency_ms: f64,
     #[serde(default)]
@@ -725,7 +725,6 @@ fn reservation_counts(state: &RegistryEntries) -> BTreeMap<String, usize> {
 }
 
 fn score(provider: &CapabilityProvider) -> f64 {
-    let latency = 1.0 / (1.0 + provider.latency_ms / 100.0);
     // Selection already excluded stale candidates using one sampled timestamp.
     let load = 1.0 - provider.load;
     let power = provider.node_specs.hardware_power();
@@ -734,11 +733,7 @@ fn score(provider: &CapabilityProvider) -> f64 {
     } else {
         power / (power + 1.0)
     };
-    latency * W_LATENCY
-        + load * W_LOAD
-        + W_CAPABILITY
-        + power * W_POWER
-        + f64::from(provider.priority) * W_PRIORITY
+    load * W_LOAD + W_CAPABILITY + power * W_POWER + f64::from(provider.priority) * W_PRIORITY
 }
 
 fn type_matches(value: &Value, expected: &str) -> bool {
@@ -757,6 +752,23 @@ fn type_matches(value: &Value, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heartbeat_collection_time_does_not_displace_the_less_loaded_provider() {
+        let registry = CapabilityRegistry::default();
+        for (node, load, collection_ms) in [("busy", 0.8, 1.0), ("idle", 0.1, 1000.0)] {
+            let mut provider = CapabilityProvider::local("system.info", "run", json!({}));
+            provider.node_id = node.into();
+            registry.register(provider);
+            registry.update_metrics(node, load, collection_ms, None);
+        }
+        let selected = registry
+            .find_best("system.info", "run", &json!({}))
+            .unwrap();
+        assert_eq!(selected.node_id, "idle");
+        assert_eq!(selected.latency_ms, 1000.0);
+    }
+
     #[test]
     fn origin_scope_filters_before_ranking_without_widening_exact_constraints() {
         let registry = CapabilityRegistry::default();

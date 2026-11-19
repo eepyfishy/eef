@@ -37,6 +37,15 @@ Provider admission still requires current registration, advertised capability an
 the unchanged monotonic freshness bound. Failed admission logs age, bound and
 capability presence separately, without credentials or workload parameters.
 
+The development scheduler uses this collection time only as legacy diagnostic
+telemetry. Capability and model placement now omit it from ranking. A longer
+hardware inventory therefore cannot outweigh a lower reported node load.
+The heartbeat field and diagnostic observations keep the same wire shape.
+The existing scope, freshness, load, capability and model readiness checks still
+apply. Measured link latency and model startup-cost scheduling remain open.
+The regressions use equal candidates with conflicting load and collection time.
+Hosted verification is pending.
+
 ## Verification scope
 
 Focused tests check an empty process inventory before and after CPU/RAM sampling,
