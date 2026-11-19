@@ -294,10 +294,20 @@ async fn failed_completion_storage_retires_the_issuer_and_never_retries_the_comp
 #[tokio::test]
 async fn corrupt_coordinator_completion_is_refused_on_reopen_without_repair() {
     let dir = tempfile::tempdir().unwrap();
+    let baseline_path = dir.path().join("completed.db");
+    let (store, mut issued, receipt) = completed_fixture(&baseline_path).await;
+    let baseline = finish(&mut issued, receipt).await.unwrap();
+    drop(issued);
+    drop(store);
+    let reopened = JobStore::open(&baseline_path, 20, 8 * 1024 * 1024).unwrap();
+    assert_eq!(json!(reopened.get(&baseline.plan_id).unwrap()), json!(baseline));
+    drop(reopened);
+
+    // Each corruption starts from the same known-good, closed SQLite file.
     for index in 0..9 {
         let path = dir.path().join(format!("corrupt-{index}.db"));
-        let (store, mut issued, receipt) = completed_fixture(&path).await;
-        let mut done = finish(&mut issued, receipt).await.unwrap();
+        std::fs::copy(&baseline_path, &path).unwrap();
+        let mut done = baseline.clone();
         let e = done.execution.as_mut().unwrap();
         let w = e.workload.as_mut().unwrap();
         match index {
@@ -326,14 +336,14 @@ async fn corrupt_coordinator_completion_is_refused_on_reopen_without_repair() {
                 done.tasks[0].status = TaskStatus::Running;
             }
         }
-        drop(issued);
-        drop(store);
         let db = rusqlite::Connection::open(&path).unwrap();
-        db.execute(
-            "UPDATE durable_jobs SET plan_json=?1",
-            [serde_json::to_string(&done).unwrap()],
-        )
-        .unwrap();
+        let updated = db
+            .execute(
+                "UPDATE durable_jobs SET plan_json=?1 WHERE job_id=?2",
+                rusqlite::params![serde_json::to_string(&done).unwrap(), done.plan_id],
+            )
+            .unwrap();
+        assert_eq!(updated, 1);
         drop(db);
         let before = std::fs::read(&path).unwrap();
         assert!(
