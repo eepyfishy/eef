@@ -56,6 +56,11 @@ identify issued attempts not inspected; observing one tree never proves every
 job/network effect stopped. The coordinator's tracking revision is a snapshot
 and stays unchanged even if final node evidence now exists.
 
+Continuous workloads count as issued attempts outside this command's process
+observation coverage. Use the original grant ID with
+[stop-receipt](STOP-INSPECTION.md) to read a continuous workload's retained stop
+intent.
+
 Late/unconfirmed cleanup, policy or clock loss, abandoned execution futures,
 failed checkpoints and expired leases remain uncertain. Stopping before the
 first operation poll cannot manufacture an observed tree. A later stop cannot

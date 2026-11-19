@@ -34,7 +34,7 @@ impl Runtime {
         let issued = plan
             .execution
             .as_ref()
-            .map(|e| e.attempts.len())
+            .map(|e| e.attempts.len() + usize::from(e.workload.is_some()))
             .unwrap_or(0);
         let requested = plan
             .execution

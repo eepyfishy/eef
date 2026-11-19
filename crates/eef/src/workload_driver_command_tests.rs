@@ -496,6 +496,24 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
             assert_eq!(result["inspection"]["evidence"]["execution_stopped"], false);
             assert_eq!(stopped.load(Ordering::SeqCst), 1);
         }
+        if matches!(mode, "stop" | "lost_stop_reply") {
+            let context = final_plan.goal.request_context.as_ref().unwrap();
+            let status = runtime
+                .inspect_process_stop_status(
+                    eefn::process_stop_status::Command {
+                        id: approved.plan_id.clone(),
+                    },
+                    Some(context.origin_node()),
+                )
+                .await
+                .unwrap();
+            assert_eq!(status["stop_requested"], true);
+            assert_eq!(status["issued_attempts"], 1);
+            assert_eq!(status["not_inspected_issued_attempts"], 1);
+            assert_eq!(status["grants"], json!([]));
+            assert_eq!(status["external_effects_stopped"], false);
+            assert_eq!(status["revision"], final_plan.revision);
+        }
         let reused: Value = client
             .post(format!("http://{address}/api/commands/requests/execute"))
             .json(&body)
