@@ -70,7 +70,10 @@ ordinary placement. The comparison uses host RAM and does not reserve memory,
 infer VRAM, waive local limits or transfer execution authority. The separate
 [owned-model duration hint](MODEL-METADATA.md#owned-model-duration-hints-development)
 has a narrower scope than end-to-end scheduling by measured workload cost.
-Hosted verification of the RAM comparison is pending.
+Source `6eb80d5` passed the public cold-RAM preview and all 37 Windows native
+suites. Two separate continuous-source workspace tests timed out while observing
+journal checkpoints, leaving the combined validation gate open.
+[Hosted run 44477923007](https://github.com/eepyfishy/eef/actions/runs/44477923007)
 
 ## Verification scope
 

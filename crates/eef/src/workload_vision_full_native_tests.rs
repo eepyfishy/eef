@@ -301,7 +301,7 @@ async fn full_vision_commands() {
         .await
         .unwrap()
         .unwrap();
-    let pending = full_source_wait_plan(&runtime, id, |p| {
+    let pending = full_source_wait_plan(&runtime, id, "vision observations", |p| {
         p.execution
             .as_ref()
             .and_then(|e| e.workload.as_ref())
@@ -321,7 +321,10 @@ async fn full_vision_commands() {
     );
     tokio::time::sleep(Duration::from_millis(3600)).await;
     release.send(()).unwrap();
-    let done = full_source_wait_plan(&runtime, id, |p| p.status == PlanStatus::Completed).await;
+    let done = full_source_wait_plan(&runtime, id, "vision completion", |p| {
+        p.status == PlanStatus::Completed
+    })
+    .await;
     tokio::time::timeout(Duration::from_secs(5), model)
         .await
         .unwrap()

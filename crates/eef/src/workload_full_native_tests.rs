@@ -283,19 +283,42 @@ async fn full_source_plan(
 async fn full_source_wait_plan(
     runtime: &crate::Runtime,
     id: &str,
+    phase: &str,
     condition: impl Fn(&Plan) -> bool,
 ) -> Plan {
-    tokio::time::timeout(Duration::from_secs(15), async {
+    let store = &runtime.engine.store;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let mut changes = store.source_changes();
+    let mut last = serde_json::Value::Null;
+    let outcome = tokio::time::timeout_at(deadline, async {
         loop {
-            let plan = runtime.engine.store.get(id).unwrap();
+            let plan = store.get_before(id, deadline).await?;
             if condition(&plan) {
-                break plan;
+                break anyhow::Ok(plan);
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            last = full_source_checkpoint(&plan);
+            changes.changed().await?;
         }
     })
-    .await
-    .unwrap()
+    .await;
+    match outcome {
+        Ok(Ok(plan)) => plan,
+        Ok(Err(error)) => panic!("Workload {phase} checkpoint read failed ({error:#}): {last}"),
+        Err(_) => panic!("Workload {phase} checkpoint was not observed within 15 seconds: {last}"),
+    }
+}
+
+fn full_source_checkpoint(plan: &Plan) -> serde_json::Value {
+    let workload = plan.execution.as_ref().and_then(|e| e.workload.as_ref());
+    json!({
+        "revision": plan.revision,
+        "status": plan.status,
+        "workload_state": workload.map(|w| &w.state),
+        "acknowledged": workload.is_some_and(|w| w.acknowledgement.is_some()),
+        "event_count": workload.map(|w| w.observations.len()),
+        "completed": workload.is_some_and(|w| w.completion.is_some()),
+        "stop_report": workload.is_some_and(|w| w.stop.as_ref().is_some_and(|s| s.report.is_some())),
+    })
 }
 
 async fn full_source_finish(
@@ -304,7 +327,7 @@ async fn full_source_finish(
     trace: &std::path::Path,
     kind: FullSourceKind,
 ) -> Plan {
-    full_source_wait_plan(runtime, &plan.plan_id, |p| {
+    full_source_wait_plan(runtime, &plan.plan_id, "source consumption", |p| {
         p.execution
             .as_ref()
             .and_then(|e| e.workload.as_ref())
@@ -321,9 +344,14 @@ async fn full_source_finish(
     .await
     .unwrap();
     let mut last = 0u64;
-    let done = tokio::time::timeout(Duration::from_secs(15), async {
+    let store = &runtime.engine.store;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let mut changes = store.source_changes();
+    let mut last_checkpoint = serde_json::Value::Null;
+    let observed = tokio::time::timeout_at(deadline, async {
         loop {
-            let current = runtime.engine.store.get(&plan.plan_id).unwrap();
+            let current = store.get_before(&plan.plan_id, deadline).await?;
+            last_checkpoint = full_source_checkpoint(&current);
             if let Some(w) = current.execution.as_ref().and_then(|e| e.workload.as_ref()) {
                 for event in &w.observations {
                     if event.sequence > last {
@@ -331,26 +359,32 @@ async fn full_source_finish(
                             trace.join(format!("ack-{}", event.source_sequence)),
                             b"saved in coordinator job",
                         )
-                        .await
-                        .unwrap();
+                        .await?;
                         last = event.sequence;
                     }
                 }
             }
             if current.status == PlanStatus::Completed {
-                break current;
+                break anyhow::Ok(current);
             }
             assert_ne!(
                 current.status,
                 PlanStatus::Interrupted,
-                "Source became uncertain: {}",
-                json!(current.execution)
+                "Source became uncertain: {last_checkpoint}",
             );
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            changes.changed().await?;
         }
     })
-    .await
-    .unwrap();
+    .await;
+    let done = match observed {
+        Ok(Ok(plan)) => plan,
+        Ok(Err(error)) => {
+            panic!("Source completion checkpoint read failed ({error:#}): {last_checkpoint}")
+        }
+        Err(_) => panic!(
+            "Source completion checkpoint was not observed within 15 seconds: {last_checkpoint}"
+        ),
+    };
     let w = done.execution.as_ref().unwrap().workload.as_ref().unwrap();
     let completed = w.completion.as_ref().unwrap();
     assert_eq!(w.observations.len(), kind.event_count());
@@ -515,7 +549,7 @@ async fn full_source_cases(kind: FullSourceKind) {
         let done = if mode == "complete" {
             full_source_finish(&runtime, &plan, &trace, kind).await
         } else {
-            full_source_wait_plan(&runtime, &plan.plan_id, |p| {
+            full_source_wait_plan(&runtime, &plan.plan_id, "source consumption", |p| {
                 p.execution
                     .as_ref()
                     .and_then(|e| e.workload.as_ref())
@@ -553,7 +587,7 @@ async fn full_source_cases(kind: FullSourceKind) {
                 connection.abort();
                 let _ = (&mut connection).await;
             }
-            let stopped = full_source_wait_plan(&runtime, &plan.plan_id, |p| {
+            let stopped = full_source_wait_plan(&runtime, &plan.plan_id, mode, |p| {
                 p.status == PlanStatus::Interrupted
                     && (mode != "stop"
                         || p.execution
