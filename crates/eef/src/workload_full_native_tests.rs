@@ -627,6 +627,30 @@ async fn full_source_cases(kind: FullSourceKind) {
                 let report = w.stop.as_ref().unwrap().report.as_ref().unwrap();
                 assert!(report.confirms_scope(&w.definition.scope().unwrap()));
                 assert!(!report.execution_stopped && !report.external_effects_stopped);
+                let query = eefn::request_stop_receipt::Command {
+                    id: stopped.plan_id.clone(),
+                    grant_id: w.definition.grant_id.clone(),
+                };
+                let request_id = uuid::Uuid::new_v4().to_string();
+                let observed = service
+                    .request_stop_receipt(eefn::request_stop_receipt::Request {
+                        schema_version: 1,
+                        expected_node_id: "origin".into(),
+                        request_id: request_id.clone(),
+                        command: query.clone(),
+                    })
+                    .await
+                    .unwrap();
+                assert!(eefn::request_stop_receipt::confirmed_node(
+                    &observed, &query, "origin", &request_id
+                ));
+                assert_eq!(observed["success"], true);
+                assert_eq!(observed["result"]["inspection"]["availability"], "retained");
+                assert_eq!(
+                    observed["result"]["inspection"]["evidence"]["scope"],
+                    json!(w.definition.scope().unwrap())
+                );
+                assert_eq!(observed["result"]["revision"], stopped.revision);
             }
             if mode == "reconnect" {
                 let running = node.clone();

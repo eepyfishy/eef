@@ -14,6 +14,12 @@ retained evidence. The third reads the executor's local journal without starting
 a node runtime or connecting to a coordinator. Add --json for structured output.
 Commands require the original IDs; they do not search or guess another attempt.
 
+The origin and owner commands also support a continuous workload's exact
+grant ID. If the original stop reply was lost, inspection can show the stop
+intent retained on the node while the coordinator's job remains interrupted.
+The commands use the same response schema and authorization checks for both
+workload types.
+
 ## Evidence, not termination or recovery
 
 An inspection reports missing or retained evidence. Retained evidence binds the

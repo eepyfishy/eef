@@ -8,7 +8,7 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
         workload_network::*,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
-    for mode in ["complete", "stop", "disconnect"] {
+    for mode in ["complete", "stop", "lost_stop_reply", "disconnect"] {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("owner.json");
         let identity = eefn::tls::CoordinatorIdentity::generate().unwrap();
@@ -87,6 +87,8 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
             retained_results: true
         });
         registration["grant_stop"] = json!(eefn::grants::stop::Advertisement::new(true));
+        registration["grant_stop_read"] =
+            json!(eefn::grants::stop::inspection::Advertisement::new(true));
         registration["workload_execution"] = json!(Advertisement {
             schema_version: 2,
             available: true,
@@ -253,6 +255,9 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
                         let d = definition.as_ref().unwrap();
                         let scope = d.scope().unwrap();
                         assert_eq!(message["scope"], json!(scope));
+                        if mode == "lost_stop_reply" {
+                            continue;
+                        }
                         let report = eefn::grants::stop::Report {
                             schema_version: 1,
                             report_type: "grant_stop_receipt".into(),
@@ -279,6 +284,44 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
                             &crypto,
                             &mut output,
                             &success_response(message["id"].as_str().unwrap(), json!(report)),
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    Some("inspect_grant_stop") => {
+                        use eefn::grants::stop::inspection;
+                        assert_eq!(mode, "lost_stop_reply");
+                        assert_eq!(stops.load(Ordering::SeqCst), 1);
+                        let scope = definition.as_ref().unwrap().scope().unwrap();
+                        assert_eq!(message["scope"], json!(scope));
+                        let result = inspection::Inspection {
+                            schema_version: 1,
+                            report_type: "grant_stop_inspection".into(),
+                            node_id: scope.executor_node.clone(),
+                            grant_id: scope.grant_id.clone(),
+                            scope: Some(scope.clone()),
+                            availability: inspection::Availability::Retained,
+                            evidence: Some(inspection::Evidence {
+                                schema_version: 1,
+                                scope,
+                                recorded_at_ms: now_ms().max(1),
+                                receipt_preexisted: true,
+                                persisted: true,
+                                stop_requested: true,
+                                execution_stopped: false,
+                                external_effects_stopped: false,
+                            }),
+                            read_only: true,
+                            execution_requested: false,
+                            stop_requested: false,
+                            automatically_retried: false,
+                            reconciled: false,
+                            note: inspection::NOTE.into(),
+                        };
+                        write_message(
+                            &crypto,
+                            &mut output,
+                            &success_response(message["id"].as_str().unwrap(), json!(result)),
                         )
                         .await
                         .unwrap();
@@ -313,7 +356,7 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
         let report: Value = response.json().await.unwrap();
         assert_eq!(report["execution_requested"], true);
         assert_eq!(report["reused"], false);
-        if mode == "stop" {
+        if matches!(mode, "stop" | "lost_stop_reply") {
             tokio::time::timeout(Duration::from_secs(10), async {
                 loop {
                     let p = runtime.engine.store.get(&approved.plan_id).unwrap();
@@ -358,6 +401,10 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
                     || mode == "stop"
                         && p.status == crate::task::PlanStatus::Interrupted
                         && w.stop.as_ref().is_some_and(|s| s.report.is_some())
+                    || mode == "lost_stop_reply"
+                        && p.status == crate::task::PlanStatus::Interrupted
+                        && w.stop.as_ref().is_some_and(|s| s.outcome_unknown)
+                        && stopped.load(Ordering::SeqCst) == 1
                 {
                     break p;
                 }
@@ -400,6 +447,55 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
             );
         }
         let before = json!(final_plan);
+        if mode == "lost_stop_reply" {
+            let workload = final_plan
+                .execution
+                .as_ref()
+                .unwrap()
+                .workload
+                .as_ref()
+                .unwrap();
+            let command = eefn::request_stop_receipt::Command {
+                id: approved.plan_id.clone(),
+                grant_id: workload.definition.grant_id.clone(),
+            };
+            assert!(
+                runtime
+                    .inspect_request_stop_receipt(command.clone(), Some("other-origin"))
+                    .await
+                    .is_err()
+            );
+            let result: Value = client
+                .post(format!("http://{address}/api/commands/requests/stop-receipt"))
+                .json(&json!({
+                    "schema_version": 1,
+                    "expected_runtime_id": runtime.runtime_id(),
+                    "command": command,
+                }))
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            assert!(eefn::request_stop_receipt::confirmed(
+                &result,
+                &command,
+                None,
+                Some(runtime.runtime_id())
+            ));
+            assert_eq!(result["coordinator_attempt_state"], "unknown");
+            assert_eq!(result["inspection"]["availability"], "retained");
+            assert_eq!(
+                result["inspection"]["evidence"]["scope"],
+                json!(workload.definition.scope().unwrap())
+            );
+            assert_eq!(result["inspection"]["evidence"]["execution_stopped"], false);
+            assert_eq!(stopped.load(Ordering::SeqCst), 1);
+        }
         let reused: Value = client
             .post(format!("http://{address}/api/commands/requests/execute"))
             .json(&body)

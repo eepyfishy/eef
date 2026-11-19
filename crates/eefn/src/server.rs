@@ -840,9 +840,18 @@ impl NodeServer {
         &self,
         grant: &crate::grants::ExecutionGrant,
     ) -> Result<crate::grants::stop::inspection::Inspection> {
-        let scope = crate::grants::stop::Scope::from_grant(grant)?;
-        let response=self.invoke_message(&grant.executor_node,
-            json!({"type":"inspect_grant_stop","scope":scope,"expected_node_id":grant.executor_node,"expected_issuer_id":grant.issuer_id}),
+        self.inspect_retained_stop_scope(crate::grants::stop::Scope::from_grant(grant)?)
+            .await
+    }
+
+    /// Read historical stop evidence for the complete original grant scope.
+    pub async fn inspect_retained_stop_scope(
+        &self,
+        scope: crate::grants::stop::Scope,
+    ) -> Result<crate::grants::stop::inspection::Inspection> {
+        scope.validate()?;
+        let response=self.invoke_message(&scope.executor_node,
+            json!({"type":"inspect_grant_stop","scope":scope,"expected_node_id":scope.executor_node,"expected_issuer_id":scope.issuer_id}),
             Duration::from_secs(10),None,None,None).await?;
         if response["success"] != true {
             bail!("Stop inspection unavailable; no fallback or signal")

@@ -1020,16 +1020,26 @@ impl crate::Runtime {
         command.validate()?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let plan = self.engine.store.get_before(&command.id, deadline).await?;
-        let attempt = receipt_attempt(&plan, &command, origin)?;
+        let (scope, state) = if plan
+            .execution
+            .as_ref()
+            .is_some_and(|e| e.workload.is_some())
+        {
+            let workload = crate::workload_job_inspection::retained(&plan, &command, origin)?;
+            (workload.definition.scope()?, workload.state)
+        } else {
+            let attempt = receipt_attempt(&plan, &command, origin)?;
+            (
+                eefn::grants::stop::Scope::from_grant(&attempt.grant)?,
+                attempt.state,
+            )
+        };
         let inspection = inspect_before(
             deadline,
-            self.node_server.inspect_grant_stop(&attempt.grant),
+            self.node_server.inspect_retained_stop_scope(scope),
         )
         .await?;
-        let coordinator_attempt_state = serde_json::to_value(attempt.state)?
-            .as_str()
-            .unwrap()
-            .to_owned();
+        let coordinator_attempt_state = serde_json::to_value(state)?.as_str().unwrap().to_owned();
         let report = json!(eefn::request_stop_receipt::CoordinatorReport {
             schema_version: 1,
             report_type: "coordinator_request_stop_receipt".into(),
