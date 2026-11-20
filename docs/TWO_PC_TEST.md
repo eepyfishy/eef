@@ -25,9 +25,9 @@ package, see the [alpha diagnostic](#older-alpha-diagnostic-v040a3).
    neither enabled a new capability nor replayed the old job. Record fresh
    setup and upgrade as separate outcomes.
 
-The [isolated installer regression](BUILD.md#toolchain) uses a synthetic prior
-update selection. Record the previous package and the candidate separately for
-the real upgrade case above.
+The [isolated installer regression](BUILD.md#toolchain) covers stale update
+selections. With `-PreviousReleaseDir`, it also covers upgrading actual prior
+installations. Record the physical registration and job checks above separately.
 
 ## Pair the nodes and verify the connection
 

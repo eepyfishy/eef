@@ -1,9 +1,14 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$ReleaseDir)
+param(
+    [Parameter(Mandatory)][string]$ReleaseDir,
+    [string]$PreviousReleaseDir
+)
 
 $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $release = (Resolve-Path -LiteralPath $ReleaseDir).Path
+$previousRelease = if ($PreviousReleaseDir) { (Resolve-Path -LiteralPath $PreviousReleaseDir).Path }
+if ($previousRelease -eq $release) { throw 'Choose a separate prior release directory for the upgrade check' }
 $scratch = Join-Path $workspace ('.validation\install-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $savedAppData = $env:APPDATA
@@ -16,6 +21,74 @@ function Invoke-Installer([string]$Installer, [string]$Destination, [string[]]$E
     if (-not $child.WaitForExit(180000)) { $child.Kill(); throw 'Installer test timed out' }
     $child.Refresh()
     if ($child.ExitCode -ne 0) { throw "Installer failed: $Installer (exit $($child.ExitCode)); see $env:EEF_INSTALLER_ERROR_LOG" }
+}
+
+function Read-InstalledVersion([string]$Destination, [string]$Product) {
+    $exe = Join-Path $Destination "$Product.exe"
+    $version = (& $exe --version | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "$Product executable failed its version check" }
+    $manifest = Get-Content -Raw -LiteralPath (Join-Path $Destination 'bundle.json') | ConvertFrom-Json
+    if ($manifest.name -cne $Product -or -not $manifest.version -or $version -cne "$Product $($manifest.version)") {
+        throw "$Product executable identity differs from its bundle manifest"
+    }
+    return $version
+}
+
+function Test-PreviousInstallerUpgrade {
+    param(
+        [string]$Product,
+        [string]$CandidateInstaller,
+        [string]$CandidateVersion,
+        [string]$CandidateBinary,
+        [string]$ConfigRelative,
+        [string]$StartupName
+    )
+    $oldInstaller = Join-Path $previousRelease "$Product-installer.exe"
+    $oldHash = (Get-FileHash -LiteralPath $oldInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
+    $candidateHash = (Get-FileHash -LiteralPath $CandidateInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($oldHash -ceq $candidateHash) { throw "Previous and candidate installers have identical bytes for $Product" }
+    & (Join-Path $PSScriptRoot 'scan-windows.ps1') -Path $oldInstaller -ReportPath (Join-Path $scratch "$Product-previous-scan.json")
+
+    $destination = Join-Path $scratch ("previous-" + $Product)
+    $config = Join-Path $destination $ConfigRelative
+    $binary = Join-Path $destination "$Product.exe"
+    $expectedStartup = $Product -eq 'eefn'
+    $startupArgument = if ($expectedStartup) { '--startup' } else { '--no-startup' }
+    $candidateAppData = $env:APPDATA
+    try {
+        $env:APPDATA = Join-Path $scratch 'previous-appdata'
+        $startup = Join-Path $env:APPDATA ('Microsoft\Windows\Start Menu\Programs\Startup\' + $StartupName)
+        Invoke-Installer $oldInstaller $destination @($startupArgument, '--no-launch')
+        $oldVersion = Read-InstalledVersion $destination $Product
+        if ($oldVersion -ceq $CandidateVersion) { throw "Choose two different release versions for the $Product upgrade check" }
+        if ((Test-Path -LiteralPath $startup) -ne $expectedStartup) { throw "Prior $Product installer did not apply the requested startup choice" }
+
+        if ($Product -eq 'eefn') {
+            $node = Get-Content -Raw -LiteralPath $config | ConvertFrom-Json
+            $node.node_id = 'installer-upgrade-fixture'
+            $node.name = 'Installer upgrade fixture'
+            [IO.File]::WriteAllText($config, ($node | ConvertTo-Json -Depth 32), [Text.UTF8Encoding]::new($false))
+        }
+        $configHash = (Get-FileHash -LiteralPath $config -Algorithm SHA256).Hash
+        Invoke-Installer $CandidateInstaller $destination @('--no-launch')
+        if ((Read-InstalledVersion $destination $Product) -cne $CandidateVersion) { throw "Upgrade did not select the expected $Product version" }
+        if ((Get-FileHash -LiteralPath $config -Algorithm SHA256).Hash -cne $configHash) { throw "Upgrade modified the prior $Product configuration" }
+        if ((Test-Path -LiteralPath $startup) -ne $expectedStartup) { throw "Upgrade changed the prior $Product startup choice" }
+        if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $CandidateBinary -Algorithm SHA256).Hash) {
+            throw "Upgraded $Product binary differs from the fresh installation"
+        }
+        Write-Host "Installed-package upgrade passed for $Product ($oldVersion -> $CandidateVersion)"
+        return [ordered]@{
+            previous_version = $oldVersion
+            previous_installer_sha256 = $oldHash
+            candidate_installer_sha256 = $candidateHash
+            configuration_preserved = $true
+            startup_enabled = $expectedStartup
+            matches_fresh_binary = $true
+        }
+    } finally {
+        $env:APPDATA = $candidateAppData
+    }
 }
 
 try {
@@ -58,10 +131,7 @@ try {
             if (-not $path.StartsWith($destination+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Inventory path escaped test installation' }
             if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256) { throw "Installed file hash mismatch: $($entry.path)" }
         }
-        $version = (& $binary --version | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0) { throw 'Installed executable failed its version check' }
-        $manifest = Get-Content -Raw -LiteralPath (Join-Path $destination 'bundle.json') | ConvertFrom-Json
-        if ($version -notmatch [regex]::Escape($manifest.version)) { throw 'Installed version differs from its manifest' }
+        $version = Read-InstalledVersion $destination $name
         if ($name -eq 'eefn') {
             $node = Get-Content -Raw -LiteralPath $config | ConvertFrom-Json
             if ($node.models.ollama.selected.Count -or $node.models.llamacpp.slots.Count -or $node.endpoints.Count) { throw 'Fresh node unexpectedly configured a model or endpoint' }
@@ -70,7 +140,11 @@ try {
             & (Join-Path $destination 'tools\llama-server.exe') --version
             if ($LASTEXITCODE -ne 0) { throw 'Minimal llama.cpp runtime failed to start' }
         }
-        $results += [ordered]@{product=$name;version=$version;inventory_files=$inventory.Count;quiet_launch_disabled=$true;startup_preserved=$true;config_preserved=$true;manual_upgrade_selects_new_root=$true;previous_update_selection_backed_up=$true}
+        $result = [ordered]@{product=$name;version=$version;inventory_files=$inventory.Count;quiet_launch_disabled=$true;startup_preserved=$true;config_preserved=$true;manual_upgrade_selects_new_root=$true;previous_update_selection_backed_up=$true}
+        if ($previousRelease) {
+            $result['previous_installer_upgrade'] = Test-PreviousInstallerUpgrade -Product $name -CandidateInstaller $installer -CandidateVersion $version -CandidateBinary $binary -ConfigRelative $configRelative -StartupName $startupName
+        }
+        $results += $result
     }
     [IO.File]::WriteAllText((Join-Path $scratch 'results.json'), (ConvertTo-Json -InputObject $results -Depth 4), [Text.UTF8Encoding]::new($false))
     Write-Host "Installer validation passed. Evidence: $scratch"
