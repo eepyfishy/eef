@@ -11,7 +11,9 @@ import {createServer} from 'node:net';
 import {randomBytes,randomUUID,createHash} from 'node:crypto';
 import {createReadStream} from 'node:fs';
 import {reviewedFixture} from './reviewed-fixture.mjs';
-assert(process.argv[2],'Pass the runtime bundle directory explicitly; no old-version default');
+assert(process.argv.length===3&&process.argv[2],'Pass the runtime bundle directory explicitly');
+const candidateId=process.env.EEF_TEST_MODEL_ID;
+assert(candidateId&&candidateId.trim()===candidateId,'Set EEF_TEST_MODEL_ID to one exact catalog candidate');
 const root=resolve(import.meta.dirname,'..'),bundle=resolve(process.argv[2]);
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||bundle),reused=process.env.EEF_TEST_MODEL_FILE&&resolve(process.env.EEF_TEST_MODEL_FILE);
 const thinkingMode=process.env.EEF_TEST_THINKING_MODE||'inherit';
@@ -20,6 +22,16 @@ const testMemoryLimit=process.env.EEF_TEST_MODEL_MEMORY_LIMIT==='1';
 const downloadTimeoutMs=Number(process.env.EEF_TEST_MODEL_DOWNLOAD_TIMEOUT_MS||900000);
 assert(Number.isInteger(downloadTimeoutMs)&&downloadTimeoutMs>=60000&&downloadTimeoutMs<=3600000,'Use a bounded 1-60 minute test download timeout');
 assert(reused||process.env.EEF_TEST_ALLOW_MODEL_DOWNLOAD==='1','Choose an existing model or explicitly authorize this isolated download');
+const catalog=JSON.parse(await readFile(join(root,'config/model-catalog.json'),'utf8'));
+const candidates=catalog.filter(model=>model.id===candidateId);
+assert.equal(candidates.length,1,'Choose one exact catalog candidate');
+const [entry]=candidates;
+async function verifyArtifact(path){
+ assert.equal((await stat(path)).size,entry.bytes,'Model file size differs from the source catalog');
+ const hash=createHash('sha256');for await(const chunk of createReadStream(path))hash.update(chunk);
+ assert.equal(hash.digest('hex'),entry.sha256,'Model file digest differs from the source catalog');
+}
+if(reused)await verifyArtifact(reused);
 const scratch=await mkdtemp(join(root,'.validation','real-model-')),children=[];
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function port(){const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
@@ -46,9 +58,14 @@ try{
  await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==old,'apply pinned TLS');
  await cli('eefn',configPath,['connection','pair','--code-file',privateFile]);
  await until(async()=>{const s=await json(node+'/api/status');return s.connection.state==='connected'&&s.execution_grants.available;},'pinned node session');
- const catalog=(await json(node+'/api/models')).catalog;const entry=catalog.find(m=>m.id===(process.env.EEF_TEST_MODEL_ID||catalog[0].id));assert(entry);
+ const runtimeCandidates=(await json(node+'/api/models')).catalog.filter(model=>model.id===entry.id);
+ assert.equal(runtimeCandidates.length,1,'The fresh node must advertise the exact catalog candidate');
+ const [runtimeEntry]=runtimeCandidates;
+ assert.equal(runtimeEntry.bytes,entry.bytes,'Candidate size differs from the source catalog');
+ assert.equal(runtimeEntry.sha256,entry.sha256,'Candidate digest differs from the source catalog');
  let modelPath=reused,last=-1;
  if(!reused){
+ assert.equal(runtimeEntry.url,entry.url,'Candidate download source differs from the source catalog');
  console.log('Explicit test-only model download: '+entry.name+' ('+entry.bytes+' bytes)');
  const preflight=await cli('eefn',configPath,['models','install-plan','--model',entry.id]);
  assert.equal(preflight.plan.backend,'llamacpp');assert.equal(preflight.plan.can_request,true);
@@ -69,10 +86,8 @@ try{
  const installed=await cli('eefn',configPath,['models','installed']);
  const model=installed.inventory.installed.find(m=>m.id===entry.id);assert(model);modelPath=model.path;
  assert.equal((await cli('eefn',configPath,['models','show'])).saved_selections.length,0,'installation cannot silently select an interpreter');
+ await verifyArtifact(modelPath);
  }else assert.equal((await json(node+'/api/status')).download.state,'idle');
- assert.equal((await stat(modelPath)).size,entry.bytes);
- const hash=createHash('sha256');for await(const chunk of createReadStream(modelPath))hash.update(chunk);
- assert.equal(hash.digest('hex'),entry.sha256,'existing artifacts must still pass exact verification');
  console.log('Verified test artifact: '+modelPath);
  // Public selection and tuning commands; no config JSON edits for these settings.
  await cli('eefn',configPath,['models','select-gguf','--model',entry.id,'--file',modelPath,'--port',String(modelPort),'--context','2048','--cpu-threads','4','--role','request_interpreter']);

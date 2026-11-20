@@ -1,6 +1,7 @@
 // Reject unsafe/malformed evaluation arguments before artifact/config/process work.
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import {readFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 const root=resolve(import.meta.dirname,'..'),harness=join(root,'tools/test-interpreter-quality.mjs');
 const invalid=[null,{},['--config','outside-config.json'],['--restart','1'],
@@ -33,3 +34,25 @@ for(const [args,extra,pattern] of [
  assert.equal(result.error,undefined);assert.notEqual(result.status,0);assert.match(result.stderr.toString(),pattern);
 }
 console.log('Shared-provider evaluation admission arguments passed; no provider/fixture/process work started.');
+
+const catalogPath=join(root,'config/model-catalog.json');
+const [candidate]=JSON.parse(await readFile(catalogPath,'utf8'));
+for(const script of [harness,join(root,'tools/test-real-model.mjs')]){
+ for(const [candidateId,pattern,file='must-not-open-artifact.gguf'] of [
+  [undefined,/Set EEF_TEST_MODEL_ID to one exact catalog candidate/],
+  ['',/Set EEF_TEST_MODEL_ID to one exact catalog candidate/],
+  [' ',/Set EEF_TEST_MODEL_ID to one exact catalog candidate/],
+  [' padded-candidate ',/Set EEF_TEST_MODEL_ID to one exact catalog candidate/],
+  ['fixture-no-such-catalog-candidate',/Choose one exact catalog candidate/],
+  [candidate.id,/Model file size differs from the source catalog/,catalogPath],
+ ]){
+  const result=spawnSync(process.execPath,[script,'must-not-open-runtime'],{
+   cwd:root,windowsHide:true,timeout:10000,maxBuffer:65536,
+   env:{...process.env,EEF_TEST_MODEL_FILE:file,EEF_TEST_MODEL_ID:candidateId,
+    EEF_TEST_QUALITY_SUITE:'original-v1',EEF_TEST_INFERENCE_TIMEOUT_SECONDS:'1',EEF_TEST_THINKING_MODE:'inherit',
+    EEF_TEST_ALLOW_MODEL_DOWNLOAD:'0',EEF_TEST_MODEL_DOWNLOAD_TIMEOUT_MS:'60000',EEF_TEST_INTERPRETER_SAMPLING_ARGS:'[]'},
+  });
+  assert.equal(result.error,undefined);assert.notEqual(result.status,0);assert.match(result.stderr.toString(),pattern);
+ }
+}
+console.log('Both CPU model acceptance tools require an explicit catalog candidate and reject mismatched files before node startup.');

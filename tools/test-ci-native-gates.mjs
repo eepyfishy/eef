@@ -6,6 +6,10 @@ const workflow=(await readFile(new URL('../.github/workflows/verify.yml',import.
 function step(name){const result=workflow.split(/^      - name: /m).find(block=>block.startsWith(name+'\n'));assert(result,'Missing guarded step');return result;}
 const tests=step('Workspace and all-target regression tests'),build=step('Build Windows command services and isolated helpers'),native=step('Native Windows synthetic regressions (no installer or model download)');
 const firewall=step('Windows firewall command mocks (no policy changes)');
+const evaluator=step('Interpreter evaluation guards and grading (no model execution)');
+assert(!/^        if:/m.test(evaluator),'Interpreter guards apply to every matrix job');
+assert.match(evaluator,/node tools\/test-interpreter-quality-options\.mjs\n          if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/);
+assert.match(evaluator,/node tools\/test-interpreter-quality-rubric\.mjs\n          exit \$LASTEXITCODE/);
 assert.match(firewall,/^        shell: powershell$/m);
 assert.match(firewall,/& \.\/tools\/test-windows-firewall\.ps1/);
 assert.match(tests,/^        id: workspace_tests$/m);assert.match(build,/^        id: native_build$/m);
@@ -45,7 +49,8 @@ for(const os of ['windows-2025','ubuntu-24.04'])for(const mode of ['headless','d
  const reachable={...steps,native_build:{outcome:canBuild(matrix,steps,()=>cancelled)?fresh:'skipped'}};
  if(!canBuild(matrix,steps,()=>cancelled))assert.equal(canRun(matrix,reachable,()=>cancelled),false,'Skipped prerequisites must not reach native execution');
 }
-const scripts=[...native.matchAll(/'(test-[\w-]+\.mjs)'/g)].map(match=>match[1]);assert.equal(scripts.length,38);assert.equal(new Set(scripts).size,38);
+const scripts=[...native.matchAll(/'(test-[\w-]+\.mjs)'/g)].map(match=>match[1]);assert.equal(scripts.length,39);assert.equal(new Set(scripts).size,39);
+assert(scripts.includes('test-interpreter-quality-ollama.mjs'));
 assert(scripts.includes('test-model-lifecycle-policy.mjs'));
 assert(scripts.includes('test-camera-check.mjs'));
 assert(scripts.includes('test-setup-model-check.mjs'));

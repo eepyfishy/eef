@@ -100,15 +100,18 @@ default-feature executables to test saved UI visibility separately from the API.
 node tools/test-model-metadata.mjs
 node tools/test-first-run.mjs
 $env:EEF_TEST_BINARY_DIR = 'ABSOLUTE_FRESH_BINARY_DIRECTORY'
+$env:EEF_TEST_MODEL_ID = 'EXACT_CATALOG_MODEL_ID'
 $env:EEF_TEST_MODEL_FILE = 'ABSOLUTE_EXISTING_CATALOG_MODEL_FILE'
 node tools/test-real-model.mjs ABSOLUTE_RUNTIME_BUNDLE_DIRECTORY
 ```
 
-The runtime bundle supplies llama.cpp; `EEF_TEST_BINARY_DIR` can point at freshly
-built roles instead of old packaged executables. Choose a catalog model with
-`EEF_TEST_MODEL_ID` if needed. Without an existing model, a download requires the
-additional explicit `EEF_TEST_ALLOW_MODEL_DOWNLOAD=1` opt-in and occurs only in
-the disposable fixture. Never select or alter a personal model for this test.
+The runtime bundle supplies llama.cpp. Point `EEF_TEST_BINARY_DIR` at freshly
+built roles and choose the exact catalog model with `EEF_TEST_MODEL_ID`. The
+test verifies existing files before starting either service. The node must
+advertise the matching size and SHA-256. A download requires the additional
+explicit `EEF_TEST_ALLOW_MODEL_DOWNLOAD=1` opt-in, a matching catalog download
+source, and the disposable fixture. Never select or alter a personal model for
+this test.
 
 The subsequent [input workflow acceptance](INPUT-WORKFLOW.md) adds seven Rust
 tests (397 total in both feature modes) and an API-only public-command fixture.

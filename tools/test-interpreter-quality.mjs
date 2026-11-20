@@ -79,11 +79,14 @@ if(sharedOllama){
 }else{
  assert(process.argv.length===3&&process.env.EEF_TEST_MODEL_FILE,
   'Pass the runtime bundle and set EEF_TEST_MODEL_FILE to an existing catalog artifact. No downloads supported.');
+ const candidateId=process.env.EEF_TEST_MODEL_ID;
+ assert(candidateId&&candidateId.trim()===candidateId,'Set EEF_TEST_MODEL_ID to one exact catalog candidate');
  bundle=resolve(process.argv[2]);model=resolve(process.env.EEF_TEST_MODEL_FILE);runtime=join(bundle,'tools','llama-server.exe');
  const catalog=JSON.parse(await readFile(join(root,'config/model-catalog.json'),'utf8'));
- const matches=catalog.filter(m=>m.id===(process.env.EEF_TEST_MODEL_ID||catalog[0]?.id));
+ const matches=catalog.filter(m=>m.id===candidateId);
  assert.equal(matches.length,1,'Choose one exact catalog candidate');entry=matches[0];
- assert.equal((await stat(model)).size,entry.bytes);assert.equal(await digest(model),entry.sha256,'Candidate hash mismatch');
+ assert.equal((await stat(model)).size,entry.bytes,'Model file size differs from the source catalog');
+ assert.equal(await digest(model),entry.sha256,'Candidate hash mismatch');
  runtimeHash=await digest(runtime);
 }
 const backend=sharedOllama?'ollama':'llamacpp',nodeHash=await digest(join(bin,'eefn.exe'));

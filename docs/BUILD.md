@@ -79,12 +79,11 @@ Reports and screenshots stay in ignored `.validation/first-run-*` directories.
 native setup window with isolated startup settings, folder choice, Install,
 and Finish. It retains welcome/completion screenshots and scan reports.
 
-For an **explicit real-model download test**, retain the unpacked bundle and
-run `node tools/test-real-model.mjs bundle/eef-windows-x86_64-v0.3.2`.
-This downloads the catalog's approximately 491 MB starter model into a unique
-ignored validation directory, selects it, waits for the bundled CPU runtime,
-and invokes inference through eef. It does not use personal model storage.
-Remove that exact generated test directory afterward if space is limited.
+The [real CPU inference test](CLIENT-ACCEPTANCE.md#running-the-checks) uses an
+unpacked runtime bundle and an explicit catalog candidate. You can reuse a
+matching artifact or separately opt in to downloading that candidate into the
+test's ignored validation directory. The test selects the candidate in its own
+configuration and invokes inference through eef.
 
 ## Historical validation performed for 0.3.1
 

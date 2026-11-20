@@ -82,17 +82,18 @@ Neither mode downloads/copies models, changes installed nodes or approves qualit
 
 ### Owned CPU GGUF
 
-Build fresh default-feature binaries, then supply an existing, exact catalog
-artifact and a runtime bundle. The harness verifies the artifact's size/SHA-256,
-records runtime/node binary hashes, and uses the real owner command to assign the
-interpreter role in its disposable configuration. It never downloads or copies
-a model, modifies installed nodes, or contacts a coordinator.
+Build fresh binaries and examples, then supply an explicit catalog ID, an
+existing matching artifact, and a runtime bundle. The harness verifies the
+artifact's size and SHA-256 and records runtime and node binary hashes. It uses
+the owner command to assign the interpreter role in its disposable configuration.
+It never downloads or copies a model, modifies installed nodes, or contacts a
+coordinator.
 
 ```powershell
 node tools/test-interpreter-quality-rubric.mjs
 $env:EEF_TEST_BINARY_DIR = 'ABSOLUTE_FRESH_BINARY_DIRECTORY'
 $env:EEF_TEST_MODEL_FILE = 'ABSOLUTE_EXISTING_CATALOG_MODEL_FILE'
-$env:EEF_TEST_MODEL_ID = 'qwen2.5-small'
+$env:EEF_TEST_MODEL_ID = 'EXACT_CATALOG_MODEL_ID'
 node tools/test-interpreter-quality.mjs ABSOLUTE_RUNTIME_BUNDLE_DIRECTORY
 ```
 

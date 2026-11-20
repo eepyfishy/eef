@@ -85,6 +85,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tools/test-backend-boundary.mjs
           exit $LASTEXITCODE
+      - name: Interpreter evaluation guards and grading (no model execution)
+        run: |
+          node tools/test-interpreter-quality-options.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tools/test-interpreter-quality-rubric.mjs
+          exit $LASTEXITCODE
       - name: Windows firewall command mocks (no policy changes)
         if: ${{ !cancelled() && matrix.os == 'windows-2025' && matrix.mode == 'headless' }}
         shell: powershell
@@ -167,6 +173,7 @@ jobs:
             'test-model-bootstrap.mjs',
             'test-model-metadata.mjs',
             'test-model-lifecycle-policy.mjs',
+            'test-interpreter-quality-ollama.mjs',
             'test-node-output.mjs',
             'test-request-review.mjs',
             'test-request-input.mjs',

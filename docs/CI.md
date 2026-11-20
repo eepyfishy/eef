@@ -1,5 +1,14 @@
 # GitHub core verification
 
+## Interpreter evaluation checks
+
+Every matrix job checks candidate argument rejection and the frozen semantic
+rubric without running a model. Windows headless also runs the shared-provider
+evaluator against a synthetic loopback service and freshly built node binaries.
+It checks metadata limits, provider identity and residency, and that
+an uncertain reply ends the run without another inference request. Actual model
+quality and default approval require separate evidence.
+
 ## Node-output fixture ownership and failure diagnostics
 
 `2a66c47` [run 40222139226](https://github.com/eepyfishy/eef/actions/runs/40222139226)
