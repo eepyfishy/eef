@@ -155,6 +155,12 @@ fn authorized_mode(mode: Mode, owner_approved: bool) -> bool {
     )
 }
 impl Attempt {
+    pub(crate) fn retryable_before_transfer(&self) -> bool {
+        !self.download_admitted
+            && (self.phase == Phase::Failed
+                || (self.phase == Phase::Stopped && self.reason == Some(Reason::OwnerStopped)))
+    }
+
     fn validate(&self, node: &str) -> Result<()> {
         self.saved.validate()?;
         crate::automation_occurrence::uuid(&self.id)?;
@@ -241,6 +247,42 @@ impl Attempt {
         self.reason = reason;
         self.updated_at_ms = crate::protocol::now_ms().max(self.updated_at_ms);
     }
+}
+
+/// Verify the retained attempt and unchanged model scope under configuration ownership.
+pub(crate) fn check_retry_locked(
+    service: &NodeService,
+    config: &Value,
+    saved: &Saved,
+    runtime: &str,
+    attempt_id: &str,
+) -> Result<()> {
+    let record = Journal::new(service)
+        .read()?
+        .context("Retained setup attempt unavailable")?;
+    if record.id != attempt_id || record.saved != *saved || !record.retryable_before_transfer() {
+        bail!("Retry requires the exact failed or stopped attempt before transfer admission")
+    }
+    // Admission is persisted before the setup worker checkpoints Downloading.
+    // A stop can win between those writes. Inspect the authoritative receipt too.
+    if service
+        .download_receipts
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Download evidence unavailable"))?
+        .get(attempt_id)?
+        .is_some()
+    {
+        bail!("A transfer was admitted for this attempt; inspect the download receipt first")
+    }
+    Fence {
+        attempt_id: None,
+        saved: saved.clone(),
+        owner_approved: record.owner_approved,
+        backend: record.backend,
+        runtime_id: runtime.into(),
+        models_sha256: record.models_sha256,
+    }
+    .check(service, config)
 }
 
 struct Journal {

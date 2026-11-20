@@ -186,8 +186,15 @@ impl Saved {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Edit {
+    Generic,
+    Configure,
+    Retry,
+}
+
 /// Central save hook: old clients cannot erase opt-outs or forge/reset CAS state.
-pub(crate) fn preserve_revision(old: &Value, next: &mut Value, authorized: bool) -> Result<()> {
+pub(crate) fn preserve_revision(old: &Value, next: &mut Value, edit: Edit) -> Result<()> {
     if next.get("model_bootstrap").is_none() {
         if let Some(policy) = old.get("model_bootstrap") {
             next["model_bootstrap"] = policy.clone();
@@ -211,7 +218,10 @@ pub(crate) fn preserve_revision(old: &Value, next: &mut Value, authorized: bool)
         }
     };
     let incoming = Policy::from_config(next)?;
-    if !authorized
+    if edit == Edit::Retry && incoming != previous.policy {
+        bail!("Retry requires unchanged bootstrap preferences")
+    }
+    if edit == Edit::Generic
         && incoming.automation
         && incoming.mode == Mode::Auto
         && incoming != previous.policy
@@ -220,7 +230,7 @@ pub(crate) fn preserve_revision(old: &Value, next: &mut Value, authorized: bool)
             "Use model-bootstrap-policy configure with current runtime and policy version to authorize automatic setup; a generic save cannot enable or retarget it"
         )
     }
-    let revision = if incoming == previous.policy {
+    let revision = if incoming == previous.policy && edit != Edit::Retry {
         previous.revision
     } else {
         previous
@@ -257,6 +267,10 @@ pub enum Command {
         previous: Saved,
         attempt_id: String,
     },
+    Retry {
+        previous: Saved,
+        attempt_id: String,
+    },
     Configure {
         previous: Saved,
         mode: Option<Mode>,
@@ -272,10 +286,22 @@ impl Command {
         if let Self::Stop {
             previous,
             attempt_id,
+        }
+        | Self::Retry {
+            previous,
+            attempt_id,
         } = self
         {
             previous.validate()?;
             crate::automation_occurrence::uuid(attempt_id)?;
+        }
+        if let Self::Retry { previous, .. } = self {
+            if !previous.policy.automation
+                || previous.policy.catalog.is_none()
+                || !matches!(previous.policy.mode, Mode::Auto | Mode::Prompt)
+            {
+                bail!("Retry requires enabled setup with an exact catalog model")
+            }
         }
         if let Self::Approve { previous } = self {
             previous.validate()?;
@@ -418,13 +444,20 @@ pub enum Action {
         #[arg(long)]
         attempt: String,
     },
+    /// Authorize a new setup attempt after an exact failure or stop before transfer.
+    Retry {
+        #[arg(long)]
+        attempt: String,
+    },
     Configure(Settings),
 }
 impl Action {
     pub fn validate(&self) -> Result<()> {
         match self {
             Self::Configure(settings) => settings.validate(),
-            Self::Stop { attempt } => crate::automation_occurrence::uuid(attempt),
+            Self::Stop { attempt } | Self::Retry { attempt } => {
+                crate::automation_occurrence::uuid(attempt)
+            }
             Self::Show | Self::Approve => Ok(()),
         }
     }
@@ -545,7 +578,7 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
             || (r.saved.policy.automation
                 && !matches!(
                     request.command,
-                    Command::Approve { .. } | Command::Stop { .. }
+                    Command::Approve { .. } | Command::Stop { .. } | Command::Retry { .. }
                 )
                 && r.note == LEGACY_AUTOMATION_NOTE))
     {
@@ -584,6 +617,35 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
                             a.owner_approved
                                 && a.saved == *previous
                                 && a.runtime_id == request.expected_runtime_id
+                        })
+                })
+        }
+        Command::Retry {
+            previous,
+            attempt_id,
+        } => {
+            r.changed
+                && r.saved.policy == previous.policy
+                && previous.revision.checked_add(1) == Some(r.saved.revision)
+                && r.setup.as_ref().is_some_and(|s| {
+                    s.attempt
+                        .as_ref()
+                        .is_some_and(|a| match previous.policy.mode {
+                            Mode::Auto => {
+                                !s.current_policy_attempt
+                                    && a.id == *attempt_id
+                                    && a.saved == *previous
+                                    && a.retryable_before_transfer()
+                            }
+                            Mode::Prompt => {
+                                s.current_policy_attempt
+                                    && a.id != *attempt_id
+                                    && a.saved == r.saved
+                                    && a.owner_approved
+                                    && a.runtime_id == request.expected_runtime_id
+                                    && a.phase == crate::model_setup::Phase::Approved
+                            }
+                            _ => false,
                         })
                 })
         }
@@ -665,6 +727,37 @@ impl crate::NodeService {
                         &saved,
                         &request.expected_runtime_id,
                     )?;
+                    changed = true;
+                }
+                if let Command::Retry {
+                    previous,
+                    attempt_id,
+                } = &request.command
+                {
+                    if remote && config.pointer("/management/allow_remote") != Some(&json!(true)) {
+                        bail!("Current local owner approval required for remote setup retry")
+                    }
+                    if *previous != saved {
+                        bail!("Bootstrap preferences changed; inspect before requesting a retry")
+                    }
+                    crate::model_setup::check_retry_locked(
+                        self,
+                        config,
+                        &saved,
+                        &request.expected_runtime_id,
+                        attempt_id,
+                    )?;
+                    self.renew_bootstrap_config_locked(config.clone())?;
+                    let current = self.read_config()?;
+                    saved = Saved::from_config(&current)?;
+                    if saved.policy.mode == Mode::Prompt {
+                        crate::model_setup::approve_locked(
+                            self,
+                            &current,
+                            &saved,
+                            &request.expected_runtime_id,
+                        )?;
+                    }
                     changed = true;
                 }
                 if let Command::Configure {

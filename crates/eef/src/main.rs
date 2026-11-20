@@ -2230,6 +2230,10 @@ async fn remote_model_bootstrap_cli(
                 previous,
                 attempt_id: attempt.clone(),
             },
+            Action::Retry { attempt } => Command::Retry {
+                previous,
+                attempt_id: attempt.clone(),
+            },
         };
         request.validate()?;
         requested = json!(request.command);

@@ -1,6 +1,61 @@
 use super::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+#[tokio::test]
+async fn auto_setup_retry_uses_the_receipt_before_renewing_the_policy_epoch() {
+    use crate::model_bootstrap::{Command, Request};
+    for retained_transfer in [false, true] {
+        let f = Fixture::new(true).await;
+        let engine = Arc::new(crate::NodeEngine::new(false, vec![], f.dir.path().into()).unwrap());
+        let _guard = f.service.attach_preview_runtime(&engine, f.runtime.clone());
+        let config = f.service.read_config().unwrap();
+        let saved = Saved::from_config(&config).unwrap();
+        let mut attempt =
+            new_attempt(&f.service, &config, saved.clone(), &f.runtime, false).unwrap();
+        let journal = Journal::new(&f.service);
+        journal.write(&attempt).unwrap();
+        if retained_transfer {
+            f.service.download_receipts.lock().unwrap().begin(&f.service.config_path, "node", &config,
+                &json!({"id":attempt.id,"model_id":"fixture","backend":"ollama","total":null,"definition_sha256":"a".repeat(64)})).unwrap();
+            attempt.phase(Phase::Stopped, Some(Reason::OwnerStopped));
+        } else {
+            attempt.phase(Phase::Failed, Some(Reason::Preflight));
+        }
+        journal.write(&attempt).unwrap();
+        let request = Request {
+            schema_version: 1,
+            expected_node_id: "node".into(),
+            expected_runtime_id: f.runtime.clone(),
+            command: Command::Retry {
+                previous: saved.clone(),
+                attempt_id: attempt.id.clone(),
+            },
+        };
+        let result = f.service.model_bootstrap_policy(request.clone(), false);
+        let current = f.service.read_config().unwrap();
+        if retained_transfer {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("transfer was admitted")
+            );
+            assert_eq!(current, config);
+        } else {
+            let reply = result.unwrap();
+            assert!(crate::model_bootstrap::confirmed(&reply, &request));
+            assert_eq!(current["model_bootstrap"], config["model_bootstrap"]);
+            assert_eq!(current["model_bootstrap_revision"], saved.revision + 1);
+            assert_eq!(f.record().id, attempt.id);
+            f.tick().await;
+            let retried = f.record();
+            assert_ne!(retried.id, attempt.id);
+            assert_eq!(retried.phase, Phase::Configured);
+        }
+        assert_eq!(f.pulls.load(Ordering::SeqCst), 0);
+    }
+}
+
 struct Fixture {
     service: Arc<NodeService>,
     runtime: String,

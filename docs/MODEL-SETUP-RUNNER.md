@@ -85,10 +85,20 @@ Read-only status does not create the sidecar. Core deterministic commands remain
 usable without a model or a running dashboard.
 
 After failure/unknown, inspect the retained attempt, installer receipt and current
-models first. A deliberate disable followed by enable creates a new policy epoch;
-it is a new owner decision, not evidence the previous effects stopped. Matching
-no-op policy saves, ordinary process restarts and environment recovery do not
-retry an uncertain or failed epoch.
+models first. `eefn model-bootstrap-policy retry --attempt ATTEMPT_UUID` and
+`eef node model-bootstrap-policy --node NODE_ID retry --attempt ATTEMPT_UUID`
+authorize a fresh attempt when the exact current attempt failed or was stopped by
+the owner before transfer admission. This checks both setup and download receipts,
+because transfer admission can be recorded first. A changed model binding,
+unavailable evidence, an admitted transfer, or an uncertain attempt requires
+separate inspection. Remote retry requires current local remote-management consent.
+
+Retry increments the policy revision while keeping the model binding, mode, and
+activation preference. Auto mode lets the setup supervisor start once under that
+revision. Prompt mode records a new explicit approval. If saving the revision
+succeeds but approval cannot be recorded, inspect `show`. The new prompt revision
+still requires approval. An ordinary restart or no-op save preserves the current
+revision and keeps a failed or stopped attempt consumed.
 
 ## Configuration is not activation
 

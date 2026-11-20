@@ -2487,6 +2487,10 @@ async fn execute_model_bootstrap(
                 previous,
                 attempt_id: attempt.clone(),
             },
+            Action::Retry { attempt } => Command::Retry {
+                previous,
+                attempt_id: attempt.clone(),
+            },
         };
         request.validate()?;
         requested = json!(request.command);

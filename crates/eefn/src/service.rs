@@ -185,22 +185,25 @@ impl NodeService {
     }
 
     pub(crate) fn save_config_locked(&self, value: Value) -> Result<()> {
-        self.save_config_inner(value, false, false, false)
+        self.save_config_inner(value, crate::model_bootstrap::Edit::Generic, false, false)
     }
     /// Only the runtime/CAS-checked bootstrap command may enable a new auto epoch.
     pub(crate) fn save_bootstrap_config_locked(&self, value: Value) -> Result<()> {
-        self.save_config_inner(value, true, false, false)
+        self.save_config_inner(value, crate::model_bootstrap::Edit::Configure, false, false)
+    }
+    pub(crate) fn renew_bootstrap_config_locked(&self, value: Value) -> Result<()> {
+        self.save_config_inner(value, crate::model_bootstrap::Edit::Retry, false, false)
     }
     pub(crate) fn save_listening_config_locked(&self, value: Value) -> Result<()> {
-        self.save_config_inner(value, false, true, false)
+        self.save_config_inner(value, crate::model_bootstrap::Edit::Generic, true, false)
     }
     pub(crate) fn save_workload_config_locked(&self, value: Value) -> Result<()> {
-        self.save_config_inner(value, false, false, true)
+        self.save_config_inner(value, crate::model_bootstrap::Edit::Generic, false, true)
     }
     fn save_config_inner(
         &self,
         mut value: Value,
-        bootstrap_authorized: bool,
+        bootstrap_edit: crate::model_bootstrap::Edit,
         listening_authorized: bool,
         workload_authorized: bool,
     ) -> Result<()> {
@@ -211,7 +214,7 @@ impl NodeService {
         crate::interpreter_serving::preserve_permission(&old, &mut value)?;
         // Backend-owned version survives generic saves/restore as well as the
         // typed policy command. Content rollback must not revive an old CAS.
-        crate::model_bootstrap::preserve_revision(&old, &mut value, bootstrap_authorized)?;
+        crate::model_bootstrap::preserve_revision(&old, &mut value, bootstrap_edit)?;
         crate::listening::preserve_revision(&old, &mut value, listening_authorized)?;
         crate::workload_policy::preserve(&old, &mut value, workload_authorized)?;
         let previous_policy =

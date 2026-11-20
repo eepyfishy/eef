@@ -60,6 +60,73 @@ struct Fixture {
 }
 
 #[test]
+fn prompt_retry_authorizes_one_new_attempt_for_the_exact_stop() {
+    let f = Fixture::new();
+    let mut configure = f.configure(
+        Some(Mode::Prompt),
+        Target::Catalog {
+            model_id: "fixture".into(),
+        },
+    );
+    if let Command::Configure { automation, .. } = &mut configure.command {
+        *automation = Some(true);
+    }
+    f.service.model_bootstrap_policy(configure, false).unwrap();
+    let previous: Saved = serde_json::from_value(f.show()["saved"].clone()).unwrap();
+    let approved = f
+        .service
+        .model_bootstrap_policy(
+            f.request(Command::Approve {
+                previous: previous.clone(),
+            }),
+            false,
+        )
+        .unwrap();
+    let attempt_id = approved["setup"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let retry = f.request(Command::Retry {
+        previous: previous.clone(),
+        attempt_id: attempt_id.clone(),
+    });
+    let initial = f.bytes();
+    assert!(
+        f.service
+            .model_bootstrap_policy(retry.clone(), false)
+            .is_err()
+    );
+    f.service
+        .model_bootstrap_policy(
+            f.request(Command::Stop {
+                previous: previous.clone(),
+                attempt_id: attempt_id.clone(),
+            }),
+            false,
+        )
+        .unwrap();
+    assert!(
+        f.service
+            .model_bootstrap_policy(retry.clone(), true)
+            .is_err()
+    );
+    assert_eq!(f.bytes(), initial);
+    let reply = f
+        .service
+        .model_bootstrap_policy(retry.clone(), false)
+        .unwrap();
+    assert!(confirmed(&reply, &retry));
+    assert_eq!(reply["saved"]["policy"], json!(previous.policy));
+    assert_eq!(reply["saved"]["revision"], previous.revision + 1);
+    assert_ne!(reply["setup"]["attempt"]["id"], attempt_id);
+    assert_eq!(reply["setup"]["attempt"]["phase"], "approved");
+    assert_eq!(reply["download_started"], false);
+    let renewed = f.bytes();
+    assert!(f.service.model_bootstrap_policy(retry, false).is_err());
+    assert_eq!(f.bytes(), renewed);
+}
+
+#[test]
 fn setup_stop_command_is_exact_current_consented_and_reports_no_physical_stop() {
     let f = Fixture::new();
     let mut configure = f.configure(
