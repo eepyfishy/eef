@@ -9,6 +9,21 @@ It checks metadata limits, provider identity and residency, and that
 an uncertain reply ends the run without another inference request. Actual model
 quality and default approval require separate evidence.
 
+## Hosted camera fixture observation
+
+The camera completion case in [run 44749220688](https://github.com/eepyfishy/eef/actions/runs/44749220688)
+reached four of five expected events and timed out with the job still running.
+The retained log gives the coordinator checkpoint. The location of the missing
+event remains unknown. The same run separately reproduced the restart failure
+under a full work queue.
+
+The simulated camera now spaces reads from the preceding event's acknowledgement.
+This keeps fixture timing independent of delays between returning a frame and
+accepting its event. A completion timeout reports the last event position,
+synthetic read and acknowledgement markers, and a bounded read of the original
+node receipt. The 15-second wait, event-rate limit, and required event count
+still apply.
+
 ## Node-output fixture ownership and failure diagnostics
 
 `2a66c47` [run 40222139226](https://github.com/eepyfishy/eef/actions/runs/40222139226)

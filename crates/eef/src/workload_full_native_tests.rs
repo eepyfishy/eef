@@ -317,6 +317,8 @@ fn full_source_checkpoint(plan: &Plan) -> serde_json::Value {
         "workload_state": workload.map(|w| &w.state),
         "acknowledged": workload.is_some_and(|w| w.acknowledgement.is_some()),
         "event_count": workload.map(|w| w.observations.len()),
+        "last_source_sequence": workload.and_then(|w| w.observations.last()).map(|event| event.source_sequence),
+        "last_event_elapsed_ms": workload.and_then(|w| w.observations.last()).map(|event| event.elapsed_ms),
         "completed": workload.is_some_and(|w| w.completion.is_some()),
         "stop_intent": execution.is_some_and(|e| e.stop_requested_at_ms.is_some()),
         "stop_send_reserved": workload.is_some_and(|w| w.stop.is_some()),
@@ -351,11 +353,15 @@ async fn full_source_finish(
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let mut changes = store.source_changes();
     let mut last_checkpoint = serde_json::Value::Null;
+    let mut last_definition = None;
     let observed = tokio::time::timeout_at(deadline, async {
         loop {
             let current = store.get_before(&plan.plan_id, deadline).await?;
             last_checkpoint = full_source_checkpoint(&current);
             if let Some(w) = current.execution.as_ref().and_then(|e| e.workload.as_ref()) {
+                if last_definition.is_none() {
+                    last_definition = Some(w.definition.clone());
+                }
                 for event in &w.observations {
                     if event.sequence > last {
                         tokio::fs::write(
@@ -384,9 +390,37 @@ async fn full_source_finish(
         Ok(Err(error)) => {
             panic!("Source completion checkpoint read failed ({error:#}): {last_checkpoint}")
         }
-        Err(_) => panic!(
-            "Source completion checkpoint was not observed within 15 seconds: {last_checkpoint}"
-        ),
+        Err(_) => {
+            // The completion wait has already failed. Gather only an observation
+            // of the original source and its fixture markers for the test log.
+            let source = if let Some(definition) = last_definition {
+                match tokio::time::timeout(
+                    Duration::from_secs(2),
+                    runtime.node_server.inspect_workload_receipt(&definition),
+                )
+                .await
+                {
+                    Ok(Ok(value)) => {
+                        json!({"state":value.receipt.state,"completion_present":value.completion.is_some()})
+                    }
+                    Ok(Err(_)) => json!("receipt_unavailable"),
+                    Err(_) => json!("receipt_observation_timed_out"),
+                }
+            } else {
+                serde_json::Value::Null
+            };
+            let markers = |prefix: &str| {
+                (1..=5)
+                    .filter(|number| trace.join(format!("{prefix}-{number}")).is_file())
+                    .collect::<Vec<_>>()
+            };
+            let observation = json!({"plan":last_checkpoint,"node_receipt":source,
+                "acknowledged_frames":markers("ack"),"returned_frames":kind.camera().then(|| markers("returned")),
+                "camera_released":kind.camera().then(|| trace.join("released").is_file())});
+            panic!(
+                "Source completion checkpoint was not observed within 15 seconds: {observation}"
+            );
+        }
     };
     let w = done.execution.as_ref().unwrap().workload.as_ref().unwrap();
     let completed = w.completion.as_ref().unwrap();
