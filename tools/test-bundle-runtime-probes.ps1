@@ -62,3 +62,4 @@ public static class BundleVersionFixture
     if (Test-Path -LiteralPath $fixture -PathType Leaf) { Remove-Item -LiteralPath $fixture -ErrorAction SilentlyContinue }
 }
 Write-Output 'Bundle runtime probe passed eight native-command checks'
+exit 0
