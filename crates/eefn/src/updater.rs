@@ -171,7 +171,7 @@ pub async fn apply_explicit_for<G>(
         install_dir.as_ref(),
         timeout,
         program,
-        Some(current_version),
+        current_version,
         true,
         authorize,
     )
@@ -259,6 +259,17 @@ pub async fn apply_for(
     timeout: Duration,
     program: &str,
 ) -> Result<UpdateApplied> {
+    apply_for_running(url, install_dir, timeout, program, crate::VERSION).await
+}
+
+/// Recheck the fetched feed against the app version that requested installation.
+pub async fn apply_for_running(
+    url: &str,
+    install_dir: impl AsRef<Path>,
+    timeout: Duration,
+    program: &str,
+    current_version: &str,
+) -> Result<UpdateApplied> {
     let manifest = load_manifest(url, timeout.min(Duration::from_secs(30))).await?;
     validate_version(&manifest.version)?;
     // Recheck the actual manifest being installed, not a previous check result.
@@ -273,7 +284,7 @@ pub async fn apply_for(
         install_dir.as_ref(),
         timeout,
         program,
-        None,
+        current_version,
         false,
         || Ok(()),
     )
@@ -285,11 +296,14 @@ async fn install_manifest<G>(
     install_dir: &Path,
     timeout: Duration,
     program: &str,
-    current_version: Option<&str>,
+    current_version: &str,
     https_only: bool,
     authorize: impl Fn() -> Result<G>,
 ) -> Result<UpdateApplied> {
     validate_program(program)?;
+    if !is_newer(&manifest.version, current_version) {
+        bail!("update must be newer than the running version")
+    }
     let install = install_dir
         .canonicalize()
         .context("install directory does not exist")?;
@@ -309,7 +323,7 @@ async fn install_manifest<G>(
         if crate::bundle_selection::read(&install, version)?.is_some()
             && crate::bundle_selection::pending_executable(
                 &install,
-                current_version.unwrap_or(crate::VERSION),
+                current_version,
                 program,
                 &std::env::current_exe()?,
             )?
@@ -318,13 +332,11 @@ async fn install_manifest<G>(
             bail!("an installed repair is pending; restart and inspect before updating again")
         }
     }
-    if let Some(current) = current_version {
-        if selected
-            .as_deref()
-            .is_some_and(|selected| selected != current)
-        {
-            bail!("an installed update is pending; restart and inspect before updating again")
-        }
+    if selected
+        .as_deref()
+        .is_some_and(|selected| selected != current_version)
+    {
+        bail!("an installed update is pending; restart and inspect before updating again")
     }
     let versions = install.join("versions");
     fs::create_dir_all(&versions)?;
@@ -332,11 +344,6 @@ async fn install_manifest<G>(
     if destination.exists() || crate::bundle_selection::read(&install, &manifest.version)?.is_some()
     {
         bail!("this update version is already present; existing installed files were preserved")
-    }
-    if let Some(selected) = selected.as_deref() {
-        if !is_newer(&manifest.version, selected) {
-            bail!("update cannot replace an equal or newer installed selection")
-        }
     }
     let limit = manifest
         .size_bytes
@@ -357,26 +364,23 @@ async fn install_manifest<G>(
         .prefix(".incoming-")
         .tempdir_in(&versions)?;
     extract_zip(&bytes, staging.path())?;
-    if !contains_binary(staging.path(), program) {
-        bail!("update archive does not contain the {program} executable");
+    let binary = find_binary(staging.path(), program)
+        .with_context(|| format!("update archive does not contain the {program} executable"))?;
+    let metadata_path = binary
+        .parent()
+        .context("missing update directory")?
+        .join("bundle.json");
+    let mut metadata = Vec::new();
+    File::open(metadata_path)
+        .context("update bundle metadata unavailable")?
+        .take(65537)
+        .read_to_end(&mut metadata)?;
+    if metadata.len() > 65536 {
+        bail!("update bundle metadata is too large")
     }
-    if current_version.is_some() {
-        let binary = find_binary(staging.path(), program).context("missing update executable")?;
-        let metadata_path = binary
-            .parent()
-            .context("missing update directory")?
-            .join("bundle.json");
-        let mut metadata = Vec::new();
-        File::open(metadata_path)?
-            .take(65537)
-            .read_to_end(&mut metadata)?;
-        if metadata.len() > 65536 {
-            bail!("update bundle metadata is too large")
-        }
-        let metadata: serde_json::Value = serde_json::from_slice(&metadata)?;
-        if metadata["name"] != program || metadata["version"] != manifest.version {
-            bail!("update bundle product/version does not match the explicit selection")
-        }
+    let metadata: serde_json::Value = serde_json::from_slice(&metadata)?;
+    if metadata["name"] != program || metadata["version"] != manifest.version {
+        bail!("update bundle product/version does not match the requested update")
     }
     // A revoked grant while downloading must not select the staged update.
     let _authorization_guard = authorize()?;
@@ -1093,7 +1097,7 @@ mod tests {
                     dir.path(),
                     Duration::from_secs(1),
                     program,
-                    Some(current),
+                    current,
                     false,
                     || Ok(())
                 )
@@ -1109,7 +1113,7 @@ mod tests {
                     dir.path(),
                     Duration::from_secs(1),
                     program,
-                    Some(current),
+                    current,
                     false,
                     || Ok(())
                 )
@@ -1124,7 +1128,7 @@ mod tests {
                     dir.path(),
                     Duration::from_secs(1),
                     program,
-                    Some(current),
+                    current,
                     false,
                     || Ok(())
                 )
@@ -1139,7 +1143,7 @@ mod tests {
                     dir.path(),
                     Duration::from_secs(1),
                     program,
-                    Some(current),
+                    current,
                     false,
                     || -> Result<()> { bail!("revoked after download") }
                 )
@@ -1161,7 +1165,7 @@ mod tests {
                     dir.path(),
                     Duration::from_secs(1),
                     program,
-                    Some(current),
+                    current,
                     false,
                     || Ok(())
                 )
@@ -1176,7 +1180,7 @@ mod tests {
                 dir.path(),
                 Duration::from_secs(1),
                 program,
-                Some(current),
+                current,
                 false,
                 || Ok(()),
             )
@@ -1197,7 +1201,7 @@ mod tests {
                     dir.path(),
                     Duration::from_secs(1),
                     program,
-                    Some(current),
+                    current,
                     false,
                     || Ok(())
                 )
@@ -1273,6 +1277,15 @@ mod tests {
                 )
                 .unwrap();
             archive.write_all(b"test fixture, never executed").unwrap();
+            archive
+                .start_file("bundle.json", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            archive
+                .write_all(
+                    &serde_json::to_vec(&serde_json::json!({"name":program,"version":"0.4.0"}))
+                        .unwrap(),
+                )
+                .unwrap();
             let bytes = archive.finish().unwrap().into_inner();
             let artifact = dir.path().join("fixture.zip");
             fs::write(&artifact, &bytes).unwrap();
@@ -1281,20 +1294,20 @@ mod tests {
             let save = |value: &serde_json::Value| {
                 fs::write(&feed, serde_json::to_vec(value).unwrap()).unwrap()
             };
+            let apply = || {
+                apply_for_running(
+                    feed.to_str().unwrap(),
+                    dir.path(),
+                    Duration::from_secs(2),
+                    program,
+                    "0.3.2",
+                )
+            };
             fs::write(dir.path().join("current.txt"), "0.3.2\n").unwrap();
             let mut bad = manifest.clone();
             bad["sha256"] = serde_json::json!("0".repeat(64));
             save(&bad);
-            assert!(
-                apply_for(
-                    feed.to_str().unwrap(),
-                    dir.path(),
-                    Duration::from_secs(2),
-                    program
-                )
-                .await
-                .is_err()
-            );
+            assert!(apply().await.is_err());
             assert_eq!(
                 fs::read_to_string(dir.path().join("current.txt")).unwrap(),
                 "0.3.2\n"
@@ -1302,25 +1315,9 @@ mod tests {
             bad = manifest.clone();
             bad["size_bytes"] = serde_json::json!(bytes.len() + 1);
             save(&bad);
-            assert!(
-                apply_for(
-                    feed.to_str().unwrap(),
-                    dir.path(),
-                    Duration::from_secs(2),
-                    program
-                )
-                .await
-                .is_err()
-            );
+            assert!(apply().await.is_err());
             save(&manifest);
-            apply_for(
-                feed.to_str().unwrap(),
-                dir.path(),
-                Duration::from_secs(2),
-                program,
-            )
-            .await
-            .unwrap();
+            apply().await.unwrap();
             assert_eq!(
                 fs::read_to_string(dir.path().join("current.txt")).unwrap(),
                 "0.4.0\n"
@@ -1336,22 +1333,83 @@ mod tests {
             bad = manifest.clone();
             bad["url"] = serde_json::json!("http://127.0.0.1:1/not-requested");
             save(&bad);
-            assert!(
-                apply_for(
-                    feed.to_str().unwrap(),
-                    dir.path(),
-                    Duration::from_secs(2),
-                    program
-                )
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("already present")
-            );
+            assert!(apply().await.unwrap_err().to_string().contains("pending"));
             assert_eq!(
                 fs::read_to_string(dir.path().join("previous.txt")).unwrap(),
                 "0.3.2"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn stable_feed_rejects_mislabeled_bundles_and_older_running_versions() {
+        use std::io::Write;
+        for (program, other_program) in [("eef", "eefn"), ("eefn", "eef")] {
+            let root = tempfile::tempdir().unwrap();
+            let feed = root.path().join("feed.json");
+            let artifact = root.path().join("package.zip");
+            let write_feed =
+                |version: &str, bytes: &[u8]| {
+                    fs::write(&feed, serde_json::to_vec(&serde_json::json!({
+                    "version":version,"url":artifact,"sha256":hex::encode(Sha256::digest(bytes))
+                })).unwrap()).unwrap();
+                };
+            let install = || {
+                apply_for_running(
+                    feed.to_str().unwrap(),
+                    root.path(),
+                    Duration::from_secs(2),
+                    program,
+                    "0.4.0-alpha.6",
+                )
+            };
+            write_feed("0.3.2", b"absent older artifact, must never be opened");
+            assert!(
+                install()
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("newer than the running version")
+            );
+            assert!(!root.path().join("versions").exists());
+            for metadata in [
+                None,
+                Some(serde_json::json!({"name":program,"version":"0.4.0-alpha.6"})),
+                Some(serde_json::json!({"name":other_program,"version":"0.4.0"})),
+            ] {
+                let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
+                zip.start_file(
+                    format!("{program}.exe"),
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+                zip.write_all(b"synthetic package, never executed").unwrap();
+                let error_fragment = if let Some(metadata) = metadata {
+                    zip.start_file("bundle.json", zip::write::SimpleFileOptions::default())
+                        .unwrap();
+                    zip.write_all(&serde_json::to_vec(&metadata).unwrap())
+                        .unwrap();
+                    "product/version"
+                } else {
+                    "metadata unavailable"
+                };
+                let bytes = zip.finish().unwrap().into_inner();
+                fs::write(&artifact, &bytes).unwrap();
+                write_feed("0.4.0", &bytes);
+                assert!(
+                    install()
+                        .await
+                        .unwrap_err()
+                        .to_string()
+                        .contains(error_fragment)
+                );
+                assert!(!root.path().join("current.txt").exists());
+                assert!(!root.path().join("previous.txt").exists());
+                assert_eq!(
+                    fs::read_dir(root.path().join("versions")).unwrap().count(),
+                    0
+                );
+            }
         }
     }
 

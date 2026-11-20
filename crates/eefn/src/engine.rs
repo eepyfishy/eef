@@ -2272,7 +2272,14 @@ impl NodeEngine {
                 updater::check(manifest, &self.current_version, Duration::from_secs(30)).await?,
             )?),
             "apply" => Ok(serde_json::to_value(
-                updater::apply(manifest, &self.install_dir, Duration::from_secs(120)).await?,
+                updater::apply_for_running(
+                    manifest,
+                    &self.install_dir,
+                    Duration::from_secs(120),
+                    "eefn",
+                    &self.current_version,
+                )
+                .await?,
             )?),
             _ => bail!("unknown node.update action '{action}'"),
         }

@@ -13,6 +13,13 @@ rechecks the downloaded manifest and rejects prereleases before downloading the
 artifact or creating an installation directory. Installing an alpha does not
 subscribe that machine to alpha updates. Stable feeds remain on stable releases.
 
+Feed installation rechecks that the fetched version is newer than the running
+app and refuses to replace a pending update. The verified archive must contain
+`bundle.json` beside the target executable. Its `name` and `version` must match
+the app role and the exact version in the feed. Forks and custom feeds must
+include that metadata in each role's bundle. A missing or mismatched record
+fails before the updater switches the installed selection.
+
 Prereleases require an explicitly chosen installer or owner-pinned explicit
 command, never an automatic feed subscription. A version-pinned test
 manifest may be used only for an owner-supervised migration from an older node
