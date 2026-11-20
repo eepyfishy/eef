@@ -83,6 +83,7 @@ impl RequestBudget {
                         | "setup_check"
                         | "repair_setup_policy_status"
                         | "restart"
+                        | "restart_runtime"
                         | "model_lifecycle_status"
                         | "model_lifecycle_cancel"
                         | "model_lifecycle_policy_status"
@@ -424,6 +425,7 @@ mod tests {
         let ping = budget.admit("system.ping", "run").unwrap();
         assert!(budget.admit_receipt().is_none());
         assert!(budget.admit("node.configure", "restart").is_none());
+        assert!(budget.admit("node.configure", "restart_runtime").is_none());
         drop(ping);
         let receipt = budget.admit_receipt().unwrap();
         assert!(budget.admit("node.configure", "status").is_none());
@@ -434,9 +436,12 @@ mod tests {
         drop(receipt);
         let restart = budget.admit("node.configure", "restart").unwrap();
         assert!(budget.admit("node.configure", "status").is_none());
+        drop(restart);
+        let runtime_restart = budget.admit("node.configure", "restart_runtime").unwrap();
+        assert!(budget.admit("node.configure", "status").is_none());
         drop(work);
         assert!(budget.admit("http.request", "send").is_some());
-        drop(restart);
+        drop(runtime_restart);
         assert!(budget.admit("node.configure", "status").is_some());
     }
 

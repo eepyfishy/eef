@@ -417,7 +417,8 @@ try{
   const approvedTimer=setTimeout(()=>approvedRestart.kill(),22000);
   let restarted;
   try{const result=await approvedRestart.result;assert.equal(result.code,0,result.out+result.err);restarted=JSON.parse(result.out);}finally{clearTimeout(approvedTimer);}
-  assert.equal(restarted.completed,true);assert.equal(restarted.previous_runtime_id,beforeRemoteRuntime);
+  assert.equal(restarted.completed,true);assert.equal(restarted.acknowledged,true);
+  assert.equal(restarted.previous_runtime_id,beforeRemoteRuntime);
   assert.notEqual(restarted.runtime_id,beforeRemoteRuntime);
   gates.get(restartPrompt)();gates.delete(restartPrompt);
   await until(async()=>(await inventory()).nodes[0]?.models.length===2,'reconnect after reserved remote restart');
