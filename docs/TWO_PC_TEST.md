@@ -5,6 +5,30 @@ Record the source revision, executable versions and package SHA-256 values.
 These steps use commands added after the published alphas. For the older
 package, see the [alpha diagnostic](#older-alpha-diagnostic-v040a3).
 
+## Verify setup and upgrade from real installers
+
+1. Record the candidate installer hashes and the Windows and Defender versions
+   on each PC. Use the normal Windows download and installation flow as a
+   standard user. Record any publisher warning or threat detection separately.
+   Keep a detected sample quarantined and record that install as blocked.
+2. For a fresh installation, install both roles on PC A and the node on PC B.
+   Confirm separate per-user directories, optional startup, and an empty model
+   selection on each node. Sign out and back in to check that only the opted-in
+   apps start. Complete the pairing and registration checks below.
+3. For an upgrade, use a separate test installation from a previously approved
+   prerelease. Record its version and installer hashes, then record the stable
+   node IDs, startup choices, configured permissions and one retained job.
+   Stop both roles and back up the test installations before upgrading in place
+   with the candidate. Start the apps and repeat the registration checks.
+4. Confirm the candidate is running, the node IDs and approved settings are
+   preserved, and the retained job is still readable. Confirm the upgrade has
+   neither enabled a new capability nor replayed the old job. Record fresh
+   setup and upgrade as separate outcomes.
+
+The [isolated installer regression](BUILD.md#toolchain) uses a synthetic prior
+update selection. Record the previous package and the candidate separately for
+the real upgrade case above.
+
 ## Pair the nodes and verify the connection
 
 1. Use two owner-approved PCs on a private LAN or overlay. Back up their

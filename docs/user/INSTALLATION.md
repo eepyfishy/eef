@@ -138,3 +138,21 @@ together with that backup. Do not downgrade a newer job database into an older
 build or run two builds against the same data. Removing history is not a way to
 undo remote work. See [updates](../UPDATES.md) for advanced update and rollback
 behavior.
+
+## Remove a Windows EXE installation
+
+1. Let the app finish its work or stop the work first. If you started the app
+   in a terminal, press Ctrl+C there. If the installer or Start menu launched it,
+   use Task Manager's **Details** tab. Check **Open file location** on
+   `eef.exe` or `eefn.exe` to confirm it belongs to the installation you
+   want to remove, then end that process.
+2. In File Explorer, open
+   `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`. Remove
+   `eef Coordinator.cmd` for eef or `eef Node.cmd` for the eef node if the
+   matching file is present.
+3. In `%APPDATA%\Microsoft\Windows\Start Menu\Programs\eef`, remove the
+   matching Start menu entry, `eef coordinator.cmd` or `eef node.cmd`.
+4. Move that app's dedicated installation folder to a backup location on the
+   same drive if you want to keep its local settings, data, and models. You can
+   delete the folder when you no longer need it. Models managed separately by
+   Ollama stay in Ollama's storage.
