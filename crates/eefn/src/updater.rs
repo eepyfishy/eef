@@ -285,6 +285,45 @@ pub async fn apply_for_running(
     program: &str,
     current_version: &str,
 ) -> Result<UpdateApplied> {
+    install_feed(
+        url,
+        install_dir.as_ref(),
+        timeout,
+        program,
+        current_version,
+        None,
+    )
+    .await
+}
+
+/// Re-read an observed offer and refuse a changed artifact before transfer.
+pub async fn apply_checked_for(
+    url: &str,
+    install_dir: impl AsRef<Path>,
+    timeout: Duration,
+    program: &str,
+    observed: &UpdateCheck,
+) -> Result<UpdateApplied> {
+    observed.require_available()?;
+    install_feed(
+        url,
+        install_dir.as_ref(),
+        timeout,
+        program,
+        &observed.current_version,
+        Some(observed),
+    )
+    .await
+}
+
+async fn install_feed(
+    url: &str,
+    install_dir: &Path,
+    timeout: Duration,
+    program: &str,
+    current_version: &str,
+    observed: Option<&UpdateCheck>,
+) -> Result<UpdateApplied> {
     let manifest = load_manifest(url, timeout.min(Duration::from_secs(30))).await?;
     validate_version(&manifest.version)?;
     // Recheck the actual manifest being installed, not a previous check result.
@@ -294,9 +333,16 @@ pub async fn apply_for_running(
             "prerelease updates are blocked on feeds; use an explicit update command or installer"
         )
     }
+    if observed.is_some_and(|check| {
+        manifest.version != check.latest_version
+            || manifest.url != check.dist_url
+            || !manifest.sha256.eq_ignore_ascii_case(&check.sha256)
+    }) {
+        bail!("The stable update offer changed after checking; check again before installing")
+    }
     install_manifest(
         &manifest,
-        install_dir.as_ref(),
+        install_dir,
         timeout,
         program,
         current_version,
@@ -1367,7 +1413,18 @@ mod tests {
             save(&bad);
             assert!(apply().await.is_err());
             save(&manifest);
-            apply().await.unwrap();
+            let offer = check(feed.to_str().unwrap(), "0.3.2", Duration::from_secs(2))
+                .await
+                .unwrap();
+            apply_checked_for(
+                feed.to_str().unwrap(),
+                dir.path(),
+                Duration::from_secs(2),
+                program,
+                &offer,
+            )
+            .await
+            .unwrap();
             assert_eq!(
                 fs::read_to_string(dir.path().join("current.txt")).unwrap(),
                 "0.4.0\n"
@@ -1409,6 +1466,42 @@ mod tests {
                 fs::read_to_string(dir.path().join("previous.txt")).unwrap(),
                 "0.3.2"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn stable_install_refuses_offer_changes_before_artifact_access() {
+        use serde_json::json;
+        let root = tempfile::tempdir().unwrap();
+        let feed = root.path().join("feed.json");
+        let path = feed.to_str().unwrap();
+        let original = json!({"version":"0.4.0","url":root.path().join("not-present.zip"),"sha256":"0".repeat(64)});
+        let save = |value: &serde_json::Value| {
+            fs::write(&feed, serde_json::to_vec(value).unwrap()).unwrap()
+        };
+        let timeout = Duration::from_secs(2);
+        for program in ["eef", "eefn"] {
+            save(&original);
+            let observed = check(path, "0.4.0-alpha.6", timeout).await.unwrap();
+            for (field, different) in [
+                ("version", json!("0.4.1")),
+                ("url", json!(root.path().join("other-not-present.zip"))),
+                ("sha256", json!("1".repeat(64))),
+            ] {
+                let mut changed = original.clone();
+                changed[field] = different;
+                save(&changed);
+                let error = apply_checked_for(path, root.path(), timeout, program, &observed)
+                    .await
+                    .unwrap_err();
+                assert!(
+                    error.to_string().contains("offer changed"),
+                    "{field}: {error}"
+                );
+                assert!(!root.path().join(".update.lock").exists());
+                assert!(!root.path().join("versions").exists());
+                assert!(!root.path().join("current.txt").exists());
+            }
         }
     }
 

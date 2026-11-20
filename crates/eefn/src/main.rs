@@ -4880,11 +4880,12 @@ fn start_update_monitor(
                 Ok(check) if check.update_available => {
                     info!(current = %check.current_version, latest = %check.latest_version, %policy, "eef node update available");
                     if matches!(policy.as_str(), "auto" | "automatic") {
-                        match eefn::updater::apply_for(
+                        match eefn::updater::apply_checked_for(
                             &url,
                             &install_dir,
                             Duration::from_secs(180),
                             "eefn",
+                            &check,
                         )
                         .await
                         {

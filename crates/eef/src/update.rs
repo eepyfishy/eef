@@ -121,14 +121,26 @@ impl UpdateService {
     }
 
     pub async fn apply(&self) -> Result<eefn::updater::UpdateApplied> {
-        self.check().await?.require_available()?;
+        let check = self.check().await?;
+        self.apply_checked(&check).await
+    }
+
+    async fn apply_checked(
+        &self,
+        check: &eefn::updater::UpdateCheck,
+    ) -> Result<eefn::updater::UpdateApplied> {
         let url = self
             .manifest_url
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("no update.manifest_url configured"))?;
-        let applied =
-            eefn::updater::apply_for(url, &self.install_dir, Duration::from_secs(180), "eef")
-                .await?;
+        let applied = eefn::updater::apply_checked_for(
+            url,
+            &self.install_dir,
+            Duration::from_secs(180),
+            "eef",
+            check,
+        )
+        .await?;
         let mut state = self.state.write().await;
         state.installed_version = Some(applied.new_version.clone());
         state.restart_required = applied.restart;
@@ -147,7 +159,7 @@ impl UpdateService {
                     Ok(check) if check.update_available => {
                         bus.publish("update.available", serde_json::json!({"program": "eef", "current": check.current_version, "latest": check.latest_version, "policy": service.state.read().await.policy})).await;
                         if service.policy == UpdatePolicy::Auto {
-                            match service.apply().await {
+                            match service.apply_checked(&check).await {
                                 Ok(applied) => {bus.publish("update.installed", serde_json::json!({"program": "eef", "version": applied.new_version, "restart_required": true})).await; return;},
                                 Err(error) => bus.publish("update.failed", serde_json::json!({"program": "eef", "error": error.to_string()})).await,
                             }
@@ -188,8 +200,18 @@ mod tests {
         };
         let release = |version: &str| json!({"version":version,"url":"https://example.invalid/no-artifact","sha256":"0".repeat(64)});
         save(release("99.0.0"));
-        assert!(service.check().await.unwrap().update_available);
+        let observed = service.check().await.unwrap();
+        assert!(observed.update_available);
         assert!(service.state().await.update_available);
+        save(release("99.0.1"));
+        assert!(
+            service
+                .apply_checked(&observed)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("offer changed")
+        );
         save(json!({"schema_version":1,"enabled":false,"reason":"Fixture feed"}));
         assert!(
             service

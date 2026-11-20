@@ -25,6 +25,12 @@ stable releases. A failed check clears the previous availability result until a
 check succeeds. A manual feed install reports a paused feed or a prerelease
 block explicitly.
 
+Scheduled updates and local feed installs compare the version, artifact URL,
+and SHA-256 from their check with the feed read before installation. If the
+offer changes between those reads, the operation ends before transferring an
+artifact. For an update chosen from an earlier observation, use the explicit
+version-and-hash command to pin that selection.
+
 Prereleases require an explicitly chosen installer or owner-pinned explicit
 command, never an automatic feed subscription. A version-pinned test
 manifest may be used only for an owner-supervised migration from an older node

@@ -616,10 +616,15 @@ impl NodeService {
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow::anyhow!("Configure an update manifest URL first"))?;
         let root = crate::updater::installation_root(std::env::current_exe()?)?;
-        self.observe_update_feed(url).await?.require_available()?;
-        let result =
-            crate::updater::apply_for(url, root, std::time::Duration::from_secs(600), "eefn")
-                .await?;
+        let check = self.observe_update_feed(url).await?;
+        let result = crate::updater::apply_checked_for(
+            url,
+            root,
+            std::time::Duration::from_secs(600),
+            "eefn",
+            &check,
+        )
+        .await?;
         self.live.lock().unwrap()["pending_restart"] = json!(true);
         Ok(json!(result))
     }
