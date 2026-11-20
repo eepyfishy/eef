@@ -9,17 +9,28 @@ fn definition(calls: u64) -> Definition {
         parameters.images.max_images = calls;
     }
     d.limits.max_source_frames = calls + 1;
+    // Page tests stage up to 40 real durable writes. Use the existing lease
+    // ceiling for that staging, while deadline tests keep their own contracts.
+    d.limits.max_lease_ms = crate::workload_leases::MAX_LEASE_MS;
     d.validate().unwrap();
     d
 }
+async fn stage_consumption(ledger: &Arc<GrantLedger>, d: &Definition) -> Consumption {
+    super::tests::consume_with_budget(ledger, d.clone(), Duration::from_secs(15))
+        .await
+        .expect("admit the vision-result staging fixture")
+}
+
 async fn saved(path: &Path, d: &Definition, complete: bool) -> Arc<GrantLedger> {
     let ledger = GrantLedger::open(path, Default::default(), &d.executor_node).unwrap();
-    let consumed = super::tests::consume(&ledger, d.clone()).await.unwrap();
+    let consumed = stage_consumption(&ledger, d).await;
     let writer = consumed.event_writer().unwrap();
     let reporting = consumed.reporting_authority();
     let contract = d.lease_contract().unwrap();
     let (_sender, renewals) = crate::workload_leases::renewal_channel();
-    consumed
+    let mut intents = 0;
+    let mut results = 0;
+    let staged = consumed
         .supervise(renewals, async {
             for sequence in 1..=parameters(d)?.max_calls() {
                 let permit = writer
@@ -29,6 +40,7 @@ async fn saved(path: &Path, d: &Definition, complete: bool) -> Arc<GrantLedger> 
                         Arc::new(reporting.checkpoint(&contract)?),
                     )
                     .await?;
+                intents += 1;
                 if complete {
                     writer
                         .finish_analysis(
@@ -37,12 +49,17 @@ async fn saved(path: &Path, d: &Definition, complete: bool) -> Arc<GrantLedger> 
                             Arc::new(reporting.checkpoint(&contract)?),
                         )
                         .await?;
+                    results += 1;
                 }
             }
             Ok(())
         })
-        .await
-        .unwrap();
+        .await;
+    if let Err(error) = staged {
+        panic!(
+            "Vision-result staging failed after {intents} committed intents and {results} results: {error:#}"
+        );
+    }
     tokio::time::timeout(Duration::from_secs(5), async {
         while ledger
             .workload_receipt(&d.issuer_id, &d.grant_id)
@@ -114,7 +131,7 @@ async fn empty_retained_inspection_keeps_zero_evidence_and_never_creates_complet
         &d.executor_node,
     )
     .unwrap();
-    let consumed = super::tests::consume(&ledger, d.clone()).await.unwrap();
+    let consumed = stage_consumption(&ledger, &d).await;
     let (_sender, renewals) = crate::workload_leases::renewal_channel();
     consumed
         .supervise(renewals, async { Ok(()) })

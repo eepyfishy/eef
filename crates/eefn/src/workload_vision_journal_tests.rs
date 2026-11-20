@@ -12,6 +12,14 @@ pub(super) fn image() -> crate::python::vision::PrivateJpeg {
     .unwrap()
 }
 pub(super) async fn consume(ledger: &Arc<GrantLedger>, d: Definition) -> Result<Consumption> {
+    consume_with_budget(ledger, d, Duration::from_secs(5)).await
+}
+
+pub(super) async fn consume_with_budget(
+    ledger: &Arc<GrantLedger>,
+    d: Definition,
+    admission_budget: Duration,
+) -> Result<Consumption> {
     let proof = super::super::tests::proof_for(&d, 50_000).await;
     let policy = Policy {
         enabled: true,
@@ -31,7 +39,7 @@ pub(super) async fn consume(ledger: &Arc<GrantLedger>, d: Definition) -> Result<
             &issuer,
             &session,
             &node,
-            tokio::time::Instant::now() + Duration::from_secs(5),
+            tokio::time::Instant::now() + admission_budget,
         )
         .await
 }

@@ -24,6 +24,16 @@ synthetic read and acknowledgement markers, and a bounded read of the original
 node receipt. The 15-second wait, event-rate limit, and required event count
 still apply.
 
+## Vision result fixture staging
+
+Five Windows dashboard tests in [run 44751073657](https://github.com/eepyfishy/eef/actions/runs/44751073657/job/136338802271)
+failed before reading their result pages. The logs show expired admission or
+source leases and an unconfirmed final checkpoint. The page fixture now stages
+its durable intents and results within the existing 30-second lease ceiling.
+It has a 15-second fixture admission budget and reports the number of committed
+rows if staging fails. The production final-write wait, contract validation, and
+separate deadline tests remain in force.
+
 ## Node-output fixture ownership and failure diagnostics
 
 `2a66c47` [run 40222139226](https://github.com/eepyfishy/eef/actions/runs/40222139226)
