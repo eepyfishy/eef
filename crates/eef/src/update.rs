@@ -35,6 +35,8 @@ pub struct UpdateState {
     pub current_version: String,
     pub latest_version: Option<String>,
     pub update_available: bool,
+    pub feed_paused: Option<bool>,
+    pub prerelease_blocked: Option<bool>,
     pub installed_version: Option<String>,
     pub restart_required: bool,
     pub last_checked_ms: Option<u64>,
@@ -100,21 +102,26 @@ impl UpdateService {
                 let mut state = self.state.write().await;
                 state.latest_version = Some(check.latest_version.clone());
                 state.update_available = check.update_available;
+                state.feed_paused = Some(check.feed_paused);
+                state.prerelease_blocked = Some(check.prerelease_blocked);
                 state.last_checked_ms = Some(eefn::protocol::now_ms());
                 state.last_error = None;
                 Ok(check)
             }
             Err(error) => {
-                self.state.write().await.last_error = Some(error.to_string());
+                let mut state = self.state.write().await;
+                state.latest_version = None;
+                state.update_available = false;
+                state.feed_paused = None;
+                state.prerelease_blocked = None;
+                state.last_error = Some(error.to_string());
                 Err(error)
             }
         }
     }
 
     pub async fn apply(&self) -> Result<eefn::updater::UpdateApplied> {
-        if !self.check().await?.update_available {
-            bail!("You are already up to date")
-        }
+        self.check().await?.require_available()?;
         let url = self
             .manifest_url
             .as_deref()
@@ -158,5 +165,63 @@ impl UpdateService {
                 tokio::time::sleep(service.interval).await;
             }
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn update_status_and_apply_distinguish_paused_and_prerelease_feeds() {
+        let root = tempfile::tempdir().unwrap();
+        let feed = root.path().join("feed.json");
+        let service = UpdateService::new(
+            Some(feed.to_str().unwrap().into()),
+            UpdatePolicy::Prompt,
+            Duration::from_secs(300),
+            root.path().into(),
+        );
+        let save = |value: serde_json::Value| {
+            std::fs::write(&feed, serde_json::to_vec(&value).unwrap()).unwrap()
+        };
+        let release = |version: &str| json!({"version":version,"url":"https://example.invalid/no-artifact","sha256":"0".repeat(64)});
+        save(release("99.0.0"));
+        assert!(service.check().await.unwrap().update_available);
+        assert!(service.state().await.update_available);
+        save(json!({"schema_version":1,"enabled":false,"reason":"Fixture feed"}));
+        assert!(
+            service
+                .apply()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("paused")
+        );
+        let paused = service.state().await;
+        assert_eq!(paused.feed_paused, Some(true));
+        assert!(!paused.update_available);
+        save(release("99.0.0-alpha.1"));
+        assert!(
+            service
+                .apply()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("offers a prerelease")
+        );
+        let blocked = service.state().await;
+        assert_eq!(blocked.feed_paused, Some(false));
+        assert_eq!(blocked.prerelease_blocked, Some(true));
+        assert!(!blocked.update_available);
+        save(json!({}));
+        assert!(service.check().await.is_err());
+        let failed = service.state().await;
+        assert_eq!(failed.latest_version, None);
+        assert_eq!(failed.feed_paused, None);
+        assert_eq!(failed.prerelease_blocked, None);
+        assert!(!failed.update_available);
+        assert!(!root.path().join("versions").exists());
     }
 }

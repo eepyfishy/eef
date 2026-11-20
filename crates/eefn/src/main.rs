@@ -4876,9 +4876,8 @@ fn start_update_monitor(
     let interval = Duration::from_secs(config.check_interval_seconds.max(300));
     Ok(Some(tokio::spawn(async move {
         loop {
-            match eefn::updater::check(&url, eefn::VERSION, Duration::from_secs(30)).await {
+            match dashboard.observe_update_feed(&url).await {
                 Ok(check) if check.update_available => {
-                    dashboard.live.lock().unwrap()["update"] = serde_json::json!(check);
                     info!(current = %check.current_version, latest = %check.latest_version, %policy, "eef node update available");
                     if matches!(policy.as_str(), "auto" | "automatic") {
                         match eefn::updater::apply_for(

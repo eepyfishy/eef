@@ -44,6 +44,21 @@ pub struct UpdateCheck {
     pub dist_url: String,
 }
 
+impl UpdateCheck {
+    pub fn require_available(&self) -> Result<()> {
+        if self.feed_paused {
+            bail!("The stable update feed is paused")
+        }
+        if self.prerelease_blocked {
+            bail!("The feed offers a prerelease. Feed installation requires a stable release")
+        }
+        if !self.update_available {
+            bail!("No newer stable version is available")
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UpdateApplied {
     pub new_version: String,

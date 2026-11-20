@@ -594,9 +594,19 @@ impl NodeService {
             .pointer("/update/manifest_url")
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow::anyhow!("Configure an update manifest URL first"))?;
-        Ok(json!(
-            crate::updater::check(url, crate::VERSION, std::time::Duration::from_secs(30)).await?
-        ))
+        Ok(json!(self.observe_update_feed(url).await?))
+    }
+
+    pub async fn observe_update_feed(&self, url: &str) -> Result<crate::updater::UpdateCheck> {
+        let result =
+            crate::updater::check(url, crate::VERSION, std::time::Duration::from_secs(30)).await;
+        self.live.lock().unwrap()["update"] = match &result {
+            Ok(check) => json!(check),
+            Err(_) => {
+                json!({"current_version":crate::VERSION,"update_available":false,"check_unconfirmed":true})
+            }
+        };
+        result
     }
 
     pub async fn apply_update(&self) -> Result<Value> {
@@ -606,12 +616,7 @@ impl NodeService {
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow::anyhow!("Configure an update manifest URL first"))?;
         let root = crate::updater::installation_root(std::env::current_exe()?)?;
-        if !crate::updater::check(url, crate::VERSION, std::time::Duration::from_secs(30))
-            .await?
-            .update_available
-        {
-            bail!("You are already up to date")
-        }
+        self.observe_update_feed(url).await?.require_available()?;
         let result =
             crate::updater::apply_for(url, root, std::time::Duration::from_secs(600), "eefn")
                 .await?;
@@ -1544,6 +1549,42 @@ mod tests {
         assert_eq!(status["connection_state"], "connected");
         assert!(!status.to_string().contains("PRIVATE"));
         assert!(service.remote("restart", json!({})).await.is_err());
+    }
+    #[tokio::test]
+    async fn update_checks_replace_stale_available_status_with_paused_or_unconfirmed_observations()
+    {
+        let root = tempfile::tempdir().unwrap();
+        let config_path = root.path().join("node.json");
+        let feed = root.path().join("feed.json");
+        std::fs::write(
+            &config_path,
+            serde_json::to_vec(&json!({"update":{"manifest_url":feed}})).unwrap(),
+        )
+        .unwrap();
+        let core = NodeService::new(config_path, "stable".into());
+        std::fs::write(&feed, serde_json::to_vec(&json!({"version":"99.0.0","url":"https://example.invalid/no-artifact","sha256":"0".repeat(64)})).unwrap()).unwrap();
+        assert_eq!(core.check_update().await.unwrap()["update_available"], true);
+        assert_eq!(core.status()["update"]["update_available"], true);
+        std::fs::write(
+            &feed,
+            br#"{"schema_version":1,"enabled":false,"reason":"Fixture feed"}"#,
+        )
+        .unwrap();
+        let observed = core
+            .observe_update_feed(feed.to_str().unwrap())
+            .await
+            .unwrap();
+        assert!(observed.feed_paused);
+        let paused = core.status();
+        assert_eq!(paused["update"]["feed_paused"], true);
+        assert_eq!(paused["update"]["update_available"], false);
+        std::fs::write(&feed, b"invalid feed containing private fixture text").unwrap();
+        assert!(core.check_update().await.is_err());
+        let failed = core.status();
+        assert_eq!(failed["update"]["check_unconfirmed"], true);
+        assert_eq!(failed["update"]["update_available"], false);
+        assert!(failed["update"].get("latest_version").is_none());
+        assert!(!failed.to_string().contains("private fixture text"));
     }
     #[tokio::test]
     async fn runtime_bound_remote_restart_refuses_stale_runtime_or_revoked_approval() {
