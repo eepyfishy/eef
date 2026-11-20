@@ -16,10 +16,12 @@ package, see the [alpha diagnostic](#older-alpha-diagnostic-v040a3).
    the restart. On PC B, follow the [private pairing flow](NODE-CREDENTIALS.md)
    using its existing stable node ID. Transfer the invitation privately and
    verify that the coordinator has applied its trust settings.
-3. Run `eefn setup` and `eefn network diagnose --json` on both PCs. From the
-   coordinator run `eef diagnostics --node NODE_B --samples 5 --json`.
-   Record both node IDs, versions, the pinned connection and application probe
-   results. Successful OS ping alone checks only network reachability.
+3. With both node apps running, run `eefn setup --wait-registration-seconds 30 --json`
+   on each PC. Require `outcome: "accepted"` and `last_setup.transport: "pinned_tls13"`.
+   Record the stable node IDs and runtime IDs. Run `eefn network diagnose --json`
+   on both PCs and `eef diagnostics --node NODE_B --samples 5 --json` on the
+   coordinator. Record the versions and application probe results. A successful
+   OS ping checks network reachability.
 4. Confirm PC A cannot see PC B's remote capabilities before disclosure. On
    the coordinator run `eef discovery grant --requester NODE_A --target NODE_B`
    and restart to apply it. Verify discovery works in that direction and is
@@ -49,11 +51,17 @@ Follow the [interpreter policy commands](INTERPRETER-POLICIES.md) and
    grant, origin, executor and final state. Compare the retained output with
    the approved operation on PC B. From PC B, inspect the same result through
    its node client and confirm that the origin check denies it.
-4. With separately approved test work, exercise an executor disconnect or
-   restart and a coordinator restart. Record the last acknowledged attempt,
-   stable node IDs after reconnection and retained status. Verify the old grant
-   is never replayed and unknown outcomes stay unconfirmed without matching
-   retained evidence.
+4. With separately approved test work, exercise an executor disconnect and a
+   coordinator restart. Record the last acknowledged attempt, stable node IDs
+   after reconnection and retained status. Verify the old grant is never replayed
+   and unknown outcomes stay unconfirmed without matching retained evidence.
+5. For the executor restart case, start fresh, separately approved test work
+   on PC B and have its owner allow remote management.
+   From PC A run `eef node restart --node NODE_B --wait-seconds 60 --json`. Record
+   the acknowledged prior runtime and the replacement runtime for the same node
+   ID. On PC B, wait for accepted registration again and compare that runtime ID
+   with the restart result. Record whether the last approved grant was left
+   unreplayed. Restore the owner's earlier remote-management setting afterward.
 
 ## Run a bounded continuous source across both PCs
 
