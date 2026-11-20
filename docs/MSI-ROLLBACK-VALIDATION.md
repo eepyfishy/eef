@@ -252,6 +252,13 @@ the installer worker's token. A [related open upstream report](https://github.co
 describes similar per-user registration rollback symptoms. That corroborates
 symptoms, not a fix or a causal conclusion for these packages.
 
+A November 18, 2026 follow-up independently observed the same symptoms with a
+WiX 7.0.0 package on Windows 11 build `26300.9457` (`msi.dll 5.0.26100.9444`).
+After file copy and publication, a Type 19 failure returned 1603. The text file
+and custom registry marker disappeared, but a fresh non-elevated query still
+reported product state 5. The cause and a supported fix for non-elevated
+installation remain open. [Independent reproduction](https://github.com/wixtoolset/issues/issues/8574#issuecomment-6969995463)
+
 One separately guarded, ordinary uninstall returns zero for only this synthetic
 product. Fresh reads confirm its product/related registrations absent, all five
 payload/inventory files absent, no scoped component markers and the owner marker
