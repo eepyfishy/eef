@@ -222,6 +222,9 @@ enum Commands {
         /// Allow coordinator restart (all pending settings; interrupts work).
         #[arg(long, default_value_t = false, requires = "enroll_local")]
         restart_coordinator: bool,
+        /// Observe this runtime until eef acknowledges registration or the wait expires.
+        #[arg(long, conflicts_with_all = ["local", "enroll_local"], value_parser = clap::value_parser!(u64).range(1..=60))]
+        wait_registration_seconds: Option<u64>,
     },
     /// Author source-bound disabled automations; does not start timers or work.
     Automations {
@@ -2077,7 +2080,13 @@ async fn execute_local_enrollment(
     ))?)
 }
 
-async fn execute_setup_check(args: &Args, local_plan: bool) -> Result<serde_json::Value> {
+async fn setup_check_target(
+    args: &Args,
+) -> Result<(
+    reqwest::Client,
+    std::net::SocketAddr,
+    eefn::setup_check::CheckRequest,
+)> {
     if eefn::setup::instance_lock(&args.config)?.is_some() {
         bail!("Start this node first; setup inspection never launches a node")
     }
@@ -2104,12 +2113,26 @@ async fn execute_setup_check(args: &Args, local_plan: bool) -> Result<serde_json
         request_id: uuid::Uuid::new_v4().to_string(),
     };
     request.validate()?;
+    Ok((client, address, request))
+}
+
+async fn execute_setup_check(args: &Args, local_plan: bool) -> Result<serde_json::Value> {
+    let (client, address, request) = setup_check_target(args).await?;
+    fetch_setup_check(&client, address, &request, local_plan).await
+}
+
+async fn fetch_setup_check(
+    client: &reqwest::Client,
+    address: std::net::SocketAddr,
+    request: &eefn::setup_check::CheckRequest,
+    local_plan: bool,
+) -> Result<serde_json::Value> {
     let response = client
         .post(format!(
             "http://{address}/api/commands/setup/{}",
             if local_plan { "local" } else { "check" }
         ))
-        .json(&request)
+        .json(request)
         .send()
         .await?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -2120,13 +2143,69 @@ async fn execute_setup_check(args: &Args, local_plan: bool) -> Result<serde_json
     }
     let value = eefn::model_manager::bounded_json(response).await?;
     if !(if local_plan {
-        eefn::local_setup::confirmed(&value, &request)
+        eefn::local_setup::confirmed(&value, request)
     } else {
-        eefn::setup_check::confirmed(&value, &request)
+        eefn::setup_check::confirmed(&value, request)
     }) {
         bail!("Setup reply was not confirmed; no retry was sent")
     }
     Ok(value)
+}
+
+async fn execute_registration_wait(args: &Args, seconds: u64) -> Result<serde_json::Value> {
+    use tokio::time::{Instant, sleep_until, timeout_at};
+    const WAIT_ELAPSED: (&str, &str) = (
+        "deadline_elapsed",
+        "Registration was not confirmed within the wait limit.",
+    );
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    let (client, address, mut request) = timeout_at(deadline, setup_check_target(args))
+        .await
+        .context("Registration wait expired before the running node could be identified")??;
+    let mut last_setup = None;
+    let (outcome, note) = loop {
+        if Instant::now() >= deadline {
+            break WAIT_ELAPSED;
+        }
+        let Ok(observation) = timeout_at(
+            deadline,
+            fetch_setup_check(&client, address, &request, false),
+        )
+        .await
+        else {
+            break WAIT_ELAPSED;
+        };
+        let observation = observation?;
+        let paused = observation["saved_connection_enabled"] == false
+            || observation["connection"] == "paused";
+        let registration = observation["registration"].as_str().map(str::to_owned);
+        last_setup = Some(observation);
+        if paused {
+            break (
+                "connection_paused",
+                "The node connection is paused. Resume it explicitly before waiting.",
+            );
+        }
+        if registration.as_deref() == Some("accepted") {
+            break (
+                "accepted",
+                "eef acknowledged registration for this runtime. Check model and workload readiness separately.",
+            );
+        }
+        if registration.is_none() {
+            break (
+                "registration_unreported",
+                "This node build does not report registration receipts.",
+            );
+        }
+        sleep_until((Instant::now() + Duration::from_millis(500)).min(deadline)).await;
+        request.request_id = uuid::Uuid::new_v4().to_string();
+    };
+    Ok(
+        serde_json::json!({"schema_version":1,"report_type":"node_registration_wait",
+        "success":outcome=="accepted","outcome":outcome,"node_id":request.expected_node_id,
+        "runtime_id":request.expected_runtime_id,"last_setup":last_setup,"note":note}),
+    )
 }
 
 async fn execute_camera_setup(
@@ -2836,7 +2915,15 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     {
         return execute_local_enrollment(args, *restart_coordinator).await;
     }
-    if let Commands::Setup { local, .. } = command {
+    if let Commands::Setup {
+        local,
+        wait_registration_seconds,
+        ..
+    } = command
+    {
+        if let Some(seconds) = wait_registration_seconds {
+            return execute_registration_wait(args, *seconds).await;
+        }
         return execute_setup_check(args, *local).await;
     }
     if let Commands::Automations { command } = command {
@@ -3765,6 +3852,22 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     print!("{}", eefn::local_enrollment::render(&value)?);
                 } else if matches!(command, Commands::Setup { local: true, .. }) {
                     print!("{}", eefn::local_setup::render(&value)?);
+                } else if matches!(
+                    command,
+                    Commands::Setup {
+                        wait_registration_seconds: Some(_),
+                        ..
+                    }
+                ) {
+                    println!(
+                        "{}",
+                        value["note"]
+                            .as_str()
+                            .context("Invalid registration wait result")?
+                    );
+                    if value["last_setup"].is_object() {
+                        print!("{}", eefn::setup_check::render(&value["last_setup"])?);
+                    }
                 } else if matches!(command, Commands::Setup { .. }) {
                     print!("{}", eefn::setup_check::render(&value)?);
                 } else if matches!(
@@ -6467,6 +6570,27 @@ mod tests {
         ));
         for flag in ["--apply", "--rotate", "--restart", "--code", "--address"] {
             assert!(Args::try_parse_from(["eefn", "setup", "--local", flag]).is_err());
+        }
+    }
+    #[test]
+    fn registration_wait_has_a_fixed_bound_and_cannot_be_combined_with_enrollment() {
+        let parse = |seconds| {
+            Args::try_parse_from(["eefn", "setup", "--wait-registration-seconds", seconds])
+        };
+        assert!(matches!(
+            parse("60").unwrap().command,
+            Some(Commands::Setup {
+                wait_registration_seconds: Some(60),
+                ..
+            })
+        ));
+        assert!(parse("0").is_err());
+        assert!(parse("61").is_err());
+        for other in ["--local", "--enroll-local", "--restart-coordinator"] {
+            assert!(
+                Args::try_parse_from(["eefn", "setup", "--wait-registration-seconds", "1", other])
+                    .is_err()
+            );
         }
     }
     #[test]

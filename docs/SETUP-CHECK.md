@@ -8,6 +8,7 @@ older peers/reports remain unknown, never assumed accepted or work-ready.
 ```text
 eefn setup
 eefn --json setup
+eefn setup --wait-registration-seconds 15
 ```
 
 The first command explains setup in plain language; the second returns the same
@@ -16,6 +17,23 @@ its existing config/actual local API marker. No port number, JSON input file,
 browser, coordinator connection or model is required to run the inspection.
 If the node is stopped, the command asks the owner to start it; it never launches
 a temporary second runtime or connection.
+
+An explicit `--wait-registration-seconds` value from 1 to 60 waits for the
+running runtime's accepted registration receipt. The CLI polls the same
+read-only setup service at most twice a second with a fresh correlation ID for
+each observation. The target node and runtime stay fixed throughout the wait.
+A refused, missing, or invalid reply ends the command without a fallback or
+another request. A paused connection exits early and stays paused. A build
+that omits receipt metadata returns an unavailable observation.
+
+With `--json`, the command returns a schema-1 `node_registration_wait` report
+containing the outcome and the last validated setup report, if one was received.
+Exit 0 requires `outcome: "accepted"`. The other reported outcomes are
+`connection_paused`, `registration_unreported`, and `deadline_elapsed`.
+Inspection errors use the standard command error. This observation can follow
+private enrollment once the node runtime is running. Registration is evidence
+about the current connection. Models, grants, and workload results have separate
+checks.
 
 ## Shared backend and observations
 

@@ -13,6 +13,7 @@ const scratch=await mkdtemp(join(root,'.validation/setup-check-')),children=[];
 const nodeConfig=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml');
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
 let modelCalls=0,proxyCalls=0,proxyMode='corrupt';
+const registrationRequests=[];
 const fake=createServer((req,res)=>{res.setHeader('Content-Type','application/json');if(req.url==='/api/tags')return res.end(JSON.stringify({models:[{name:'fixture-interpreter'}]}));modelCalls++;res.writeHead(409);res.end('{}');});
 let node;
 const proxy=createServer(async(req,res)=>{
@@ -30,6 +31,13 @@ const proxy=createServer(async(req,res)=>{
    if(proxyMode==='prose')value.note='PRIVATE-MUST-NOT-ECHO';
    if(proxyMode==='legacy-input')delete value.input_channel;
    if(proxyMode==='legacy-registration')delete value.registration;
+   if(proxyMode==='wait-stale-runtime')value.runtime_id=randomUUID();
+   if(proxyMode==='wait-one-receipt'||proxyMode==='wait-no-receipt'){
+    registrationRequests.push(JSON.parse(body));
+    if(proxyMode==='wait-no-receipt'||registrationRequests.length===1){
+     value.registration='awaiting_receipt';value.next_steps.unshift('wait_for_registration_receipt');
+    }
+   }
    if(proxyMode==='bad-registration')value.registration='PRIVATE-INVALID-REGISTRATION';
    if(proxyMode==='model-ready')value.model_setup.status.readiness_verified=true;
    if(proxyMode==='future-model-setup')value.model_setup={availability:'PRIVATE-INVALID-MODEL-SETUP'};
@@ -72,6 +80,8 @@ try{
  await cli(['connection','pair','--code-file',privateFile]);await until(async()=>{const s=await json(node+'/api/status');return s.connection.state==='connected'&&s.connection.transport==='pinned_tls13'&&s.execution_grants.available===true&&s.input_channel==='ready'&&s.registration==='accepted';},'connected private input channel and acknowledged registration');
  report=await check();assert.equal(report.transport,'pinned_tls13');assert.equal(report.saved_auth_mode,'node_credential');assert.equal(report.execution_receipts_available,true);assert(!report.next_steps.includes('pair_private'));assert.equal(report.applied_interpreter.model.model_id,'fixture-interpreter');
  await cli(['connection','pause']);await until(async()=>(await json(node+'/api/status')).connection.state==='paused','paused');report=await check();assert.equal(report.input_channel,'unavailable');assert.equal(report.saved_connection_enabled,false);assert(report.next_steps.includes('resume_connection'));assert.equal(report.applied_interpreter.state,'selected');
+ const pausedWait=await cli(['setup','--wait-registration-seconds','3'],true,false);
+ assert.equal(pausedWait.outcome,'connection_paused');assert.equal(pausedWait.last_setup.saved_connection_enabled,false);
  await cli(['connection','resume']);await until(async()=>{const s=await json(node+'/api/status');return s.connection.state==='connected'&&s.registration==='accepted';},'resumed and registration acknowledged');
  assert.equal((await check()).input_channel,'ready');
  const diag=await json(node+'/api/diagnostics');const request={schema_version:1,expected_node_id:'setup-fixture',expected_runtime_id:diag.runtime_id,request_id:randomUUID()};
@@ -93,7 +103,25 @@ try{
  }
  {
   const marker=nodeConfig+'.api.json',original=await readFile(marker,'utf8'),endpoint=JSON.parse(original);endpoint.address=`127.0.0.1:${proxy.address().port}`;proxyMode='legacy-registration';
-  await writeFile(marker,JSON.stringify(endpoint));try{const legacy=await cli(['setup']);assert.equal(legacy.registration,undefined);assert((await cli(['setup'],false)).out.includes('Registration: unknown'));}finally{await writeFile(marker,original);}
+  await writeFile(marker,JSON.stringify(endpoint));try{
+   const legacy=await cli(['setup']);assert.equal(legacy.registration,undefined);assert((await cli(['setup'],false)).out.includes('Registration: unknown'));
+   const unsupported=await cli(['setup','--wait-registration-seconds','3'],true,false);assert.equal(unsupported.outcome,'registration_unreported');
+   const configuration=await readFile(nodeConfig,'utf8');
+   proxyMode='wait-one-receipt';
+   const accepted=await cli(['setup','--wait-registration-seconds','10']);
+   assert.equal(accepted.report_type,'node_registration_wait');assert.equal(accepted.outcome,'accepted');
+   assert.equal(accepted.runtime_id,diag.runtime_id);assert.equal(accepted.last_setup.registration,'accepted');
+   assert.equal(registrationRequests.length,2);assert.notEqual(registrationRequests[0].request_id,registrationRequests[1].request_id);
+   for(const request of registrationRequests){assert.equal(request.expected_node_id,'setup-fixture');assert.equal(request.expected_runtime_id,diag.runtime_id);}
+   proxyMode='wait-no-receipt';
+   const timedOut=await cli(['setup','--wait-registration-seconds','3'],true,false);
+   assert.equal(timedOut.outcome,'deadline_elapsed');assert.equal(timedOut.last_setup.registration,'awaiting_receipt');
+   proxyMode='drop';const before=proxyCalls;
+   assert.equal((await cli(['setup','--wait-registration-seconds','3'],true,false)).success,false);assert.equal(proxyCalls,before+1);
+   proxyMode='wait-stale-runtime';const beforeStale=proxyCalls;
+   assert.equal((await cli(['setup','--wait-registration-seconds','3'],true,false)).success,false);assert.equal(proxyCalls,beforeStale+1);
+   assert.equal(await readFile(nodeConfig,'utf8'),configuration);
+  }finally{await writeFile(marker,original);}
  }
  nodeProcess.kill();await nodeProcess.result;const stoppedBefore=await readFile(nodeConfig,'utf8');
  const stopped=await cli(['setup'],true,false);assert.equal(stopped.success,false);assert.equal(await readFile(nodeConfig,'utf8'),stoppedBefore);
@@ -102,7 +130,7 @@ try{
   read_only_config_preserved:true,legacy_connection_not_reviewed_work:true,saved_applied_interpreter_distinct:true,pinned_transport_configuration_observed:true,
   paused_core_remains_inspectable:true,exact_node_runtime_and_cross_origin_checks:true,lost_corrupt_unsupported_no_retry_or_fallback:true,
   bounded_request_body:true,stopped_node_not_launched:true,input_queue_observed_without_inference:true,legacy_missing_input_channel_stays_unknown:true,
-  registration_ack_observed:true,legacy_missing_registration_stays_unknown:true,invalid_registration_not_echoed:true,
+  registration_ack_observed:true,registration_wait_exact_runtime_and_deadline:true,legacy_missing_registration_stays_unknown:true,invalid_registration_not_echoed:true,
   model_downloads:false,automatic_permissions:false,automatic_pairing:false,automatic_bootstrap:false},null,2));
  console.log('Setup check validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;
