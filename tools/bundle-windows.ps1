@@ -52,11 +52,13 @@ function Invoke-RequiredBundleProbe {
         [Parameter(Mandatory)][string[]]$Arguments,
         [string]$ExpectedOutput
     )
-    $output = & $Executable @Arguments
+    # Force Windows PowerShell to wait for applications that use the Windows
+    # subsystem and capture their output before reading the native exit code.
+    $output = & $Executable @Arguments | Out-String
     if ($LASTEXITCODE -ne 0) {
         throw "Bundle probe failed for $(Split-Path -Leaf $Executable), exit $LASTEXITCODE"
     }
-    if ($PSBoundParameters.ContainsKey('ExpectedOutput') -and ($output -join "`n").Trim() -cne $ExpectedOutput) {
+    if ($PSBoundParameters.ContainsKey('ExpectedOutput') -and $output.Trim() -cne $ExpectedOutput) {
         throw "Unexpected bundle probe output for $(Split-Path -Leaf $Executable). Expected '$ExpectedOutput'"
     }
 }

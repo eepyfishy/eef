@@ -32,4 +32,33 @@ Assert-ProbeRejected -Command 'echo eef 0.4.0' -ExpectedOutput 'eefn 0.4.0' -Exp
 Assert-ProbeRejected -Command 'echo eef 0.4.0' -ExpectedOutput 'eef 0.4.1' -ExpectedError 'Unexpected bundle probe output*'
 Assert-ProbeRejected -Command 'echo eef 0.4.0&exit /b 19' -ExpectedOutput 'eef 0.4.0' -ExpectedError '*exit 19'
 Assert-ProbeRejected -Command 'exit /b 0' -ExpectedOutput '3.11.9' -ExpectedError 'Unexpected bundle probe output*'
-Write-Output 'Bundle runtime probe passed six native-command checks'
+
+# Windows PowerShell does not always capture a Windows-subsystem executable
+# when it is called outside a pipeline, even when it writes to standard output.
+$fixture = Join-Path ([IO.Path]::GetTempPath()) ('eef-version-fixture-' + [guid]::NewGuid().ToString('N') + '.exe')
+try {
+    Add-Type -Language CSharp -OutputType WindowsApplication -OutputAssembly $fixture -TypeDefinition @'
+using System;
+
+public static class BundleVersionFixture
+{
+    public static int Main(string[] args)
+    {
+        Console.WriteLine("eef 0.4.0");
+        return args.Length == 1 && args[0] == "--version" ? 0 : 23;
+    }
+}
+'@
+    Invoke-RequiredBundleProbe -Executable $fixture -Arguments @('--version') -ExpectedOutput 'eef 0.4.0'
+    $recordedExit = $false
+    try {
+        Invoke-RequiredBundleProbe -Executable $fixture -Arguments @('--fail') -ExpectedOutput 'eef 0.4.0'
+    } catch {
+        if ($_.Exception.Message -notlike '*exit 23') { throw }
+        $recordedExit = $true
+    }
+    if (-not $recordedExit) { throw 'Probe accepted a failing Windows application' }
+} finally {
+    if (Test-Path -LiteralPath $fixture -PathType Leaf) { Remove-Item -LiteralPath $fixture -ErrorAction SilentlyContinue }
+}
+Write-Output 'Bundle runtime probe passed eight native-command checks'
