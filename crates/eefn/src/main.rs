@@ -220,7 +220,7 @@ enum Commands {
         #[arg(long, default_value_t = false, conflicts_with = "local")]
         enroll_local: bool,
         /// Allow coordinator restart (all pending settings; interrupts work).
-        #[arg(long, default_value_t = false, requires = "enroll_local")]
+        #[arg(long, default_value_t = false, requires = "enroll_local", conflicts_with_all = ["local", "wait_registration_seconds"])]
         restart_coordinator: bool,
         /// Observe this runtime until eef acknowledges registration or the wait expires.
         #[arg(long, conflicts_with_all = ["local", "enroll_local"], value_parser = clap::value_parser!(u64).range(1..=60))]
@@ -6589,7 +6589,8 @@ mod tests {
         for other in ["--local", "--enroll-local", "--restart-coordinator"] {
             assert!(
                 Args::try_parse_from(["eefn", "setup", "--wait-registration-seconds", "1", other])
-                    .is_err()
+                    .is_err(),
+                "registration wait accepted incompatible flag {other}"
             );
         }
     }
@@ -6601,6 +6602,9 @@ mod tests {
                 .is_ok()
         );
         assert!(Args::try_parse_from(["eefn", "setup", "--restart-coordinator"]).is_err());
+        assert!(
+            Args::try_parse_from(["eefn", "setup", "--local", "--restart-coordinator"]).is_err()
+        );
         assert!(Args::try_parse_from(["eefn", "setup", "--local", "--enroll-local"]).is_err());
         for flag in ["--rotate", "--address", "--code", "--permissions"] {
             assert!(Args::try_parse_from(["eefn", "setup", "--enroll-local", flag]).is_err());
