@@ -1819,29 +1819,27 @@ async fn execute_restart(args: &Args, wait_seconds: u64) -> Result<serde_json::V
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(3))
         .build()?;
-    let diagnostics = async || -> Result<serde_json::Value> {
+    let diagnostics = async || -> Result<(uuid::Uuid, serde_json::Value)> {
         let response = http
             .get(format!("http://{}/api/diagnostics", address()?))
             .send()
             .await?
             .error_for_status()?;
         let value = eefn::model_manager::bounded_json(response).await?;
-        if value["success"] != true || value["node_id"] != node_id {
-            bail!("local diagnostics do not match this node")
-        }
-        Ok(value)
+        let runtime = eefn::local_commands::observed_runtime_id(&value, &node_id)?;
+        Ok((runtime, value))
     };
-    let before = diagnostics().await?;
-    let previous = before["runtime_id"].as_str().map(str::to_owned);
+    let (previous, _) = diagnostics().await?;
+    let request = eefn::local_commands::RestartRequest {
+        schema_version: 1,
+        expected_node_id: node_id.clone(),
+        expected_runtime_id: Some(previous.to_string()),
+    };
     let mut result = json!({"schema_version":1,"success":false,"report_type":"local_node_restart","node_id":node_id,
-        "operation_id":uuid::Uuid::new_v4().to_string(),"previous_runtime_id":previous,"restart_requested":true,"acknowledged":false,"completed":false,"outcome_unknown":false});
+        "operation_id":uuid::Uuid::new_v4().to_string(),"previous_runtime_id":previous.to_string(),"restart_requested":true,"acknowledged":false,"completed":false,"outcome_unknown":false});
     let reply = http
         .post(format!("http://{}/api/commands/restart", address()?))
-        .json(&eefn::local_commands::RestartRequest {
-            schema_version: 1,
-            expected_node_id: node_id.clone(),
-            expected_runtime_id: previous.clone(),
-        })
+        .json(&request)
         .send()
         .await;
     match reply {
@@ -1853,11 +1851,7 @@ async fn execute_restart(args: &Args, wait_seconds: u64) -> Result<serde_json::V
         }
         Ok(response) if response.status().is_success() => {
             if let Ok(value) = eefn::model_manager::bounded_json(response).await {
-                if value["success"] == true
-                    && value["node_id"] == node_id
-                    && value["restart_requested"] == true
-                    && value["previous_runtime_id"] == json!(previous)
-                {
+                if eefn::local_commands::restart_acknowledged(&value, &request) {
                     result["acknowledged"] = json!(true);
                 }
             }
@@ -1871,21 +1865,16 @@ async fn execute_restart(args: &Args, wait_seconds: u64) -> Result<serde_json::V
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(wait_seconds);
     while tokio::time::Instant::now() < deadline {
-        if let Ok(Ok(current)) = tokio::time::timeout_at(deadline, diagnostics()).await {
-            if let Some(runtime) = current["runtime_id"]
-                .as_str()
-                .filter(|id| uuid::Uuid::parse_str(id).is_ok())
-            {
-                if previous.as_deref() != Some(runtime) {
-                    result["success"] = json!(true);
-                    result["completed"] = json!(true);
-                    result["runtime_id"] = json!(runtime);
-                    result["pending_restart"] = current["pending_restart"].clone();
-                    result["note"] = json!(
-                        "Same stable node ID initialized a new runtime. Coordinator reconnection, jobs and model readiness are not verified."
-                    );
-                    return Ok(result);
-                }
+        if let Ok(Ok((runtime, current))) = tokio::time::timeout_at(deadline, diagnostics()).await {
+            if previous != runtime {
+                result["success"] = json!(true);
+                result["completed"] = json!(true);
+                result["runtime_id"] = json!(runtime.to_string());
+                result["pending_restart"] = current["pending_restart"].clone();
+                result["note"] = json!(
+                    "Same stable node ID initialized a new runtime. Coordinator reconnection, jobs and model readiness are not verified."
+                );
+                return Ok(result);
             }
         }
         tokio::time::sleep_until(

@@ -28,6 +28,12 @@ trait NodeControl: Sync {
     async fn runtime_status(&self, id: &str) -> Result<Value> {
         self.call(id, "diagnostics", Duration::from_secs(2)).await
     }
+    async fn restart_runtime(
+        &self,
+        _request: &eefn::local_commands::RestartRequest,
+    ) -> Result<Value> {
+        bail!("runtime-bound restart unavailable")
+    }
     async fn model_command(
         &self,
         _request: &eefn::model_selection::ModelCommandRequest,
@@ -74,6 +80,19 @@ impl NodeControl for eefn::NodeServer {
                     5
                 },
             ),
+        )
+        .await
+    }
+    async fn restart_runtime(
+        &self,
+        request: &eefn::local_commands::RestartRequest,
+    ) -> Result<Value> {
+        self.invoke_remote(
+            &request.expected_node_id,
+            "node.configure",
+            "restart_runtime",
+            serde_json::to_value(request)?,
+            Duration::from_secs(3),
         )
         .await
     }
@@ -497,14 +516,21 @@ async fn restart_on(server: &impl NodeControl, request: RestartRequest) -> Resul
             json!("Enable remote management in the local node app before requesting a restart.");
         return Ok(result);
     }
-    let before = if control_status(&permitted, id) {
-        parse_runtime_id(&permitted, id)?
-    } else {
-        runtime_id(server, id).await?
+    if !control_status(&permitted, id) || permitted["data"]["runtime_restart_schema_version"] != 1 {
+        result["error_code"] = json!("runtime_restart_unsupported");
+        result["note"] =
+            json!("The node does not advertise runtime-bound restart. No restart was sent.");
+        return Ok(result);
+    }
+    let before = parse_runtime_id(&permitted, id)?;
+    let command = eefn::local_commands::RestartRequest {
+        schema_version: 1,
+        expected_node_id: id.clone(),
+        expected_runtime_id: Some(before.clone()),
     };
     result["previous_runtime_id"] = json!(before);
     result["restart_requested"] = json!(true);
-    let reply = server.call(id, "restart", Duration::from_secs(3)).await;
+    let reply = server.restart_runtime(&command).await;
     match reply {
         Ok(value) if not_started_busy(&value) => {
             result["error_code"] = json!("node_busy");
@@ -516,14 +542,15 @@ async fn restart_on(server: &impl NodeControl, request: RestartRequest) -> Resul
         }
         Ok(value)
             if value["success"] == true
-                && value.pointer("/data/restarting") == Some(&json!(true)) =>
+                && eefn::local_commands::restart_acknowledged(&value["data"], &command) =>
         {
             result["acknowledged"] = json!(true)
         }
         Ok(value) if value["success"] == false => {
             result["error_code"] = json!("restart_rejected");
-            result["note"] =
-                json!("The node rejected restart. Recheck local approval; no retry was sent.");
+            result["note"] = json!(
+                "The node rejected restart. Inspect the current runtime and local approval before deciding whether to try again."
+            );
             return Ok(result);
         }
         _ => {
@@ -577,7 +604,7 @@ fn parse_runtime_id(response: &Value, id: &str) -> Result<String> {
     }
     let runtime = data["runtime_id"]
         .as_str()
-        .and_then(|id| uuid::Uuid::parse_str(id).ok());
+        .and_then(eefn::local_commands::parse_runtime_id);
     runtime
         .map(|id| id.to_string())
         .ok_or_else(|| anyhow::anyhow!("node requires runtime-aware diagnostics"))
@@ -679,11 +706,14 @@ mod tests {
         for after_preflight in [false, true] {
             let mut calls = VecDeque::new();
             if after_preflight {
-                calls.push_back(("get", response(json!({"remote_allowed":true}))));
-                calls.push_back(("diagnostics", diagnostics(uuid::Uuid::new_v4())));
+                calls.push_back(("get", restart_status(uuid::Uuid::new_v4())));
             }
             calls.push_back((
-                if after_preflight { "restart" } else { "get" },
+                if after_preflight {
+                    "restart_runtime"
+                } else {
+                    "get"
+                },
                 busy.clone(),
             ));
             let fake = Fake(Mutex::new(calls));
@@ -940,6 +970,25 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl NodeControl for Fake {
+        async fn restart_runtime(
+            &self,
+            request: &eefn::local_commands::RestartRequest,
+        ) -> Result<Value> {
+            assert_eq!(request.schema_version, 1);
+            assert!(
+                request
+                    .expected_runtime_id
+                    .as_deref()
+                    .and_then(eefn::local_commands::parse_runtime_id)
+                    .is_some()
+            );
+            self.call(
+                &request.expected_node_id,
+                "restart_runtime",
+                Duration::from_secs(3),
+            )
+            .await
+        }
         async fn call(&self, id: &str, action: &str, _wait: Duration) -> Result<Value> {
             assert_eq!(id, "node-b");
             let (expected, value) = self
@@ -958,6 +1007,18 @@ mod tests {
     fn diagnostics(id: uuid::Uuid) -> Option<Value> {
         response(
             json!({"node_id":"node-b","runtime_id":id.to_string(),"connection_state":"connected"}),
+        )
+    }
+    fn restart_status(id: uuid::Uuid) -> Option<Value> {
+        response(
+            json!({"control_schema_version":1,"runtime_restart_schema_version":1,"remote_allowed":true,
+            "node_id":"node-b","runtime_id":id.to_string(),"connection_state":"connected"}),
+        )
+    }
+    fn restart_ack(id: uuid::Uuid) -> Option<Value> {
+        response(
+            json!({"schema_version":1,"success":true,"restarting":true,"restart_requested":true,
+            "completed":false,"node_id":"node-b","previous_runtime_id":id.to_string()}),
         )
     }
     fn request(wait_seconds: u64) -> RestartRequest {
@@ -982,13 +1043,13 @@ mod tests {
         let old = uuid::Uuid::new_v4();
         let new = uuid::Uuid::new_v4();
         let fake = Fake(Mutex::new(VecDeque::from([
-            ("get", response(json!({"remote_allowed":true}))),
-            ("diagnostics", diagnostics(old)),
-            ("restart", response(json!({"restarting":true}))),
+            ("get", restart_status(old)),
+            ("restart_runtime", restart_ack(old)),
             ("diagnostics", diagnostics(new)),
         ])));
         let result = restart_on(&fake, request(1)).await.unwrap();
         assert_eq!(result["completed"], true);
+        assert_eq!(result["acknowledged"], true);
         assert_eq!(result["runtime_id"], new.to_string());
         assert_eq!(result["previous_runtime_id"], old.to_string());
         assert!(fake.0.lock().unwrap().is_empty());
@@ -996,9 +1057,8 @@ mod tests {
     #[tokio::test]
     async fn missing_reply_is_uncertain_not_an_automatic_retry() {
         let fake = Fake(Mutex::new(VecDeque::from([
-            ("get", response(json!({"remote_allowed":true}))),
-            ("diagnostics", diagnostics(uuid::Uuid::new_v4())),
-            ("restart", None),
+            ("get", restart_status(uuid::Uuid::new_v4())),
+            ("restart_runtime", None),
         ])));
         let result = restart_on(&fake, request(0)).await.unwrap();
         assert_eq!(result["success"], false);
@@ -1009,13 +1069,13 @@ mod tests {
     #[tokio::test]
     async fn acknowledgement_alone_is_not_completion_and_revocation_is_respected() {
         for accepted in [true, false] {
+            let old = uuid::Uuid::new_v4();
             let fake = Fake(Mutex::new(VecDeque::from([
-                ("get", response(json!({"remote_allowed":true}))),
-                ("diagnostics", diagnostics(uuid::Uuid::new_v4())),
+                ("get", restart_status(old)),
                 (
-                    "restart",
+                    "restart_runtime",
                     if accepted {
-                        response(json!({"restarting":true}))
+                        restart_ack(old)
                     } else {
                         Some(json!({"success":false}))
                     },
@@ -1031,6 +1091,28 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn restart_does_not_downgrade_or_accept_an_ack_for_another_runtime() {
+        let mut legacy = restart_status(uuid::Uuid::new_v4()).unwrap();
+        legacy["data"]
+            .as_object_mut()
+            .unwrap()
+            .remove("runtime_restart_schema_version");
+        let fake = Fake(Mutex::new(VecDeque::from([("get", Some(legacy))])));
+        let result = restart_on(&fake, request(0)).await.unwrap();
+        assert_eq!(result["error_code"], "runtime_restart_unsupported");
+        assert_eq!(result["restart_requested"], false);
+        assert!(fake.0.lock().unwrap().is_empty());
+
+        let fake = Fake(Mutex::new(VecDeque::from([
+            ("get", restart_status(uuid::Uuid::new_v4())),
+            ("restart_runtime", restart_ack(uuid::Uuid::new_v4())),
+        ])));
+        let result = restart_on(&fake, request(0)).await.unwrap();
+        assert_eq!(result["acknowledged"], false);
+        assert_eq!(result["outcome_unknown"], true);
+        assert!(fake.0.lock().unwrap().is_empty());
+    }
+    #[tokio::test]
     async fn invalid_wait_and_unknown_fields_are_rejected_before_contact() {
         let fake = Fake(Mutex::new(VecDeque::new()));
         assert!(restart_on(&fake, request(61)).await.is_err());
@@ -1044,9 +1126,8 @@ mod tests {
     async fn unchanged_runtime_times_out_without_claiming_completion() {
         let old = uuid::Uuid::new_v4();
         let mut replies = VecDeque::from([
-            ("get", response(json!({"remote_allowed":true}))),
-            ("diagnostics", diagnostics(old)),
-            ("restart", response(json!({"restarting":true}))),
+            ("get", restart_status(old)),
+            ("restart_runtime", restart_ack(old)),
         ]);
         for _ in 0..8 {
             replies.push_back(("diagnostics", diagnostics(old)));

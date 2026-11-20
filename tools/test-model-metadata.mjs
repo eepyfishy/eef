@@ -601,10 +601,19 @@ try{
   const ping=await json(eef+`/api/node/${id}/invoke`,{capability:'system.ping',action:'run',params:{},timeout:10});assert.equal(ping.success,true);
   assert.equal((await nodeCommand(['show'])).saved_selections[0].model_id,'unavailable-fixture','failure must not delete owner selections');
   await json(node+'/api/config',{config:healthy},'PUT');
+  const previousRuntime=(await json(node+'/api/diagnostics')).runtime_id;
   const restartResponse=await fetch(eef+'/api/commands/node/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({node_id:id,wait_seconds:60}),signal:AbortSignal.timeout(70000)});
-  assert(restartResponse.ok);assert.equal((await restartResponse.json()).completed,true,'approved remote restart works without optional runtimes');
+  assert(restartResponse.ok);const restartReport=await restartResponse.json();
+  assert.equal(restartReport.completed,true,'approved remote restart works without optional runtimes');
+  assert.equal(restartReport.acknowledged,true);assert.equal(restartReport.previous_runtime_id,previousRuntime);
+  assert.notEqual(restartReport.runtime_id,previousRuntime);
   await until(async()=>(await json(node+'/api/status')).connection.state==='connected','node recovers after fixing optional configuration');
   assert.deepEqual((await json(node+'/api/diagnostics')).startup_issues,[]);
+  const staleRestart=await json(eef+`/api/node/${id}/invoke`,{capability:'node.configure',action:'restart_runtime',timeout:3,
+   params:{schema_version:1,expected_node_id:id,expected_runtime_id:previousRuntime}});
+  assert.equal(staleRestart.success,false,'a scoped request for the retired runtime cannot restart its replacement');
+  assert.equal((await json(node+'/api/diagnostics')).runtime_id,restartReport.runtime_id);
+  console.log('Remote restart validation passed with a bound acknowledgement and stale-runtime rejection.');
  }
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,
   legacy_node:!!legacyNode,pinned_tls:!legacyNode,reviewed_grants:!legacyNode,ordinary_workloads_refused:true,versioned_inventory:!legacyNode,owner_cli:true,api_only_both_roles:true,

@@ -2043,6 +2043,13 @@ retry. Legacy same-node status replies without the schema retain read-only
 get/diagnostics compatibility; malformed versioned replies and missing transport
 replies do not trigger fallback or restart.
 
+The current command requires `runtime_restart_schema_version:1` in the node's
+status. It sends one restart request carrying the stable node ID and the exact
+observed runtime ID. The node checks both IDs and current local approval before
+queuing the restart. A replacement runtime refuses an older runtime's request.
+Older nodes return `runtime_restart_unsupported` from the coordinator command.
+Their legacy restart action remains available to older clients.
+
 The default wait is 30 seconds (0-60 supported). Results carry an operation ID,
 stable node ID, prior/new runtime IDs, `restart_requested`, `acknowledged`,
 `completed` and `outcome_unknown`. With a nonzero wait, success means a connected
@@ -2052,8 +2059,8 @@ reply does not prove failure to restart: inspect diagnostics before any retry.
 No restart is automatically resent, and these operation IDs are not durable
 deduplication keys. Completion does not verify recovered jobs or model readiness.
 POST `/api/commands/node/restart` accepts `{node_id,wait_seconds}` under the
-existing local owner/Origin/Host guard. The command works with v0.4.0a2 nodes'
-diagnostics and management protocol; no new remote listener is introduced.
+existing local owner/Origin/Host guard. The typed restart uses the existing
+authenticated node channel.
 
 GET `/api/commands/discovery` returns this policy view and `runtime_id`. POST
 accepts `{schema_version:1,expected_runtime_id,command:{operation,requester,target}}`;
@@ -2093,9 +2100,10 @@ it does not scan backends, download models or run inference.
 
 This is a local owner command: remote-management approval is not required. It
 restarts the node app, not Windows, and applies all pending node settings. It
-refuses to start a stopped node. It sends one restart request, never an automatic
-retry. The existing browser and approved remote restart paths call the same core
-restart operation; their permission guards remain unchanged.
+refuses to start a stopped node. Before sending its one request, it checks that
+local diagnostics identify the selected node and a valid runtime. Both the
+request and its acknowledgement bind that runtime ID. The existing browser and
+approved remote restart paths call the same core restart operation.
 
 The default completion wait is 30 seconds, with 0-60 supported. Zero waits for
 acknowledgement only. A positive wait requires the same stable node ID and a new

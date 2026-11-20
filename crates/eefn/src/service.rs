@@ -914,6 +914,10 @@ impl NodeService {
             .map(str::to_owned);
         if request.schema_version != 1
             || request.expected_node_id != self.node_id
+            || current
+                .as_deref()
+                .and_then(crate::local_commands::parse_runtime_id)
+                .is_none()
             || request.expected_runtime_id != current
         {
             bail!("restart command schema, node or runtime does not match this instance")
@@ -1185,13 +1189,15 @@ impl NodeService {
             "status" => {
                 let live = self.live.lock().unwrap().clone();
                 Ok(
-                    json!({"control_schema_version":1,"remote_allowed":allowed,"runtime_id":live["runtime_id"],"connection_state":live["connection"]["state"],
+                    json!({"control_schema_version":1,"runtime_restart_schema_version":1,"remote_allowed":allowed,"runtime_id":live["runtime_id"],"connection_state":live["connection"]["state"],
                     "name":config["name"],"node_id":self.node_id,"version":crate::VERSION,"connection":live["connection"],"hardware":live["hardware"],"permissions":live["permissions"],"models":live["models"],"pending_restart":live["pending_restart"],"download":live["download"],"metadata":live["metadata"],"last_request_context":live["last_request_context"],"last_resource_id":live["last_resource_id"]}),
                 )
             }
             "models" => crate::model_manager::list(self).await,
             "inspect" => crate::model_manager::inspect(self, params).await,
             "save" => self.save_remote_configuration(params.get("config").unwrap_or(&params)),
+            "restart_runtime" => self
+                .with_remote_authority(|_| self.request_restart(serde_json::from_value(params)?)),
             "restart" => self.with_remote_authority(|_| Ok(self.queue_restart())),
             "install" => {
                 crate::model_manager::install_remote(self.clone(), params).await?;
@@ -1531,12 +1537,46 @@ mod tests {
             json!({"runtime_id":runtime_id,"connection":{"state":"connected"}});
         let status = service.remote("status", json!({})).await.unwrap();
         assert_eq!(status["control_schema_version"], 1);
+        assert_eq!(status["runtime_restart_schema_version"], 1);
         assert_eq!(status["node_id"], "stable");
         assert_eq!(status["remote_allowed"], false);
         assert_eq!(status["runtime_id"], runtime_id);
         assert_eq!(status["connection_state"], "connected");
         assert!(!status.to_string().contains("PRIVATE"));
         assert!(service.remote("restart", json!({})).await.is_err());
+    }
+    #[tokio::test]
+    async fn runtime_bound_remote_restart_refuses_stale_runtime_or_revoked_approval() {
+        let root = tempfile::tempdir().unwrap();
+        let config_path = root.path().join("node.json");
+        std::fs::write(&config_path, br#"{"management":{"allow_remote":true}}"#).unwrap();
+        let core = NodeService::new(config_path.clone(), "stable".into());
+        let runtime = uuid::Uuid::new_v4().to_string();
+        core.live.lock().unwrap()["runtime_id"] = json!(runtime);
+        let params =
+            json!({"schema_version":1,"expected_node_id":"stable","expected_runtime_id":runtime});
+        let mut stale = params.clone();
+        stale["expected_runtime_id"] = json!(uuid::Uuid::new_v4().to_string());
+        assert!(core.remote("restart_runtime", stale).await.is_err());
+        std::fs::write(&config_path, br#"{"management":{"allow_remote":false}}"#).unwrap();
+        assert!(
+            core.remote("restart_runtime", params.clone())
+                .await
+                .is_err()
+        );
+        let wait = std::time::Duration::from_millis(750);
+        assert!(
+            tokio::time::timeout(wait, core.restart.notified())
+                .await
+                .is_err()
+        );
+        std::fs::write(&config_path, br#"{"management":{"allow_remote":true}}"#).unwrap();
+        let reply = core.remote("restart_runtime", params).await.unwrap();
+        assert_eq!(reply["previous_runtime_id"], runtime);
+        assert_eq!(reply["completed"], false);
+        tokio::time::timeout(std::time::Duration::from_secs(2), core.restart.notified())
+            .await
+            .unwrap();
     }
     #[test]
     fn startup_issue_reports_are_bounded_deduplicated_and_do_not_leak_errors() {

@@ -1,6 +1,7 @@
 //! Discovery of this config's actual local API, separate from pending settings.
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{
     io::Read,
     net::SocketAddr,
@@ -85,6 +86,33 @@ pub struct RestartRequest {
     pub schema_version: u32,
     pub expected_node_id: String,
     pub expected_runtime_id: Option<String>,
+}
+
+pub fn parse_runtime_id(raw: &str) -> Option<uuid::Uuid> {
+    uuid::Uuid::parse_str(raw)
+        .ok()
+        .filter(|id| !id.is_nil() && id.to_string() == raw)
+}
+
+pub fn observed_runtime_id(value: &Value, node_id: &str) -> Result<uuid::Uuid> {
+    if value["success"] != true || value["node_id"] != node_id {
+        bail!("diagnostics do not match this node")
+    }
+    value["runtime_id"]
+        .as_str()
+        .and_then(parse_runtime_id)
+        .ok_or_else(|| anyhow::anyhow!("node requires runtime-aware diagnostics"))
+}
+
+pub fn restart_acknowledged(value: &Value, request: &RestartRequest) -> bool {
+    request.expected_runtime_id.is_some()
+        && value["schema_version"] == 1
+        && value["success"] == true
+        && value["restarting"] == true
+        && value["restart_requested"] == true
+        && value["completed"] == false
+        && value["node_id"] == request.expected_node_id
+        && value["previous_runtime_id"] == serde_json::json!(request.expected_runtime_id)
 }
 
 /// Same-user discovery metadata only. This never carries a pairing secret and
@@ -210,6 +238,15 @@ mod tests {
     async fn restart_checks_target_and_runtime_and_only_acknowledges_a_request() {
         let dir = tempfile::tempdir().unwrap();
         let core = crate::NodeService::new(dir.path().join("node.json"), "node".into());
+        assert!(
+            core.request_restart(RestartRequest {
+                schema_version: 1,
+                expected_node_id: "node".into(),
+                expected_runtime_id: None,
+            })
+            .is_err(),
+            "missing runtime cannot authorize a restart even before initialization"
+        );
         let runtime = uuid::Uuid::new_v4().to_string();
         core.live.lock().unwrap()["runtime_id"] = serde_json::json!(runtime);
         let make = || RestartRequest {
@@ -232,6 +269,7 @@ mod tests {
             .is_err()
         );
         let reply = core.request_restart(make()).unwrap();
+        assert!(restart_acknowledged(&reply, &make()));
         assert_eq!(reply["restart_requested"], true);
         assert_eq!(reply["completed"], false);
         tokio::time::timeout(std::time::Duration::from_secs(2), core.restart.notified())
@@ -245,5 +283,23 @@ mod tests {
             .await
             .is_err()
         );
+    }
+
+    #[test]
+    fn restart_diagnostics_require_the_exact_node_and_a_canonical_runtime() {
+        let runtime = uuid::Uuid::new_v4();
+        let value =
+            serde_json::json!({"success":true,"node_id":"node","runtime_id":runtime.to_string()});
+        assert_eq!(observed_runtime_id(&value, "node").unwrap(), runtime);
+        assert!(observed_runtime_id(&value, "other").is_err());
+        for invalid in [
+            Value::Null,
+            serde_json::json!(uuid::Uuid::nil().to_string()),
+            serde_json::json!(runtime.simple().to_string()),
+        ] {
+            let mut invalid_value = value.clone();
+            invalid_value["runtime_id"] = invalid;
+            assert!(observed_runtime_id(&invalid_value, "node").is_err());
+        }
     }
 }
