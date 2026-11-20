@@ -46,6 +46,21 @@ function Write-Utf8NoBom {
     [IO.File]::WriteAllText($Path, $Content, [Text.UTF8Encoding]::new($false))
 }
 
+function Invoke-RequiredBundleProbe {
+    param(
+        [Parameter(Mandatory)][string]$Executable,
+        [Parameter(Mandatory)][string[]]$Arguments,
+        [string]$ExpectedOutput
+    )
+    $output = & $Executable @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bundle probe failed for $(Split-Path -Leaf $Executable), exit $LASTEXITCODE"
+    }
+    if ($PSBoundParameters.ContainsKey('ExpectedOutput') -and ($output -join "`n").Trim() -cne $ExpectedOutput) {
+        throw "Unexpected bundle probe output for $(Split-Path -Leaf $Executable). Expected '$ExpectedOutput'"
+    }
+}
+
 $ErrorActionPreference = "Stop"
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $versionMatch = Select-String -LiteralPath (Join-Path $workspace 'Cargo.toml') -Pattern '^version = "([0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?)"$'
@@ -197,8 +212,9 @@ try {
         if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination $bundle }
     }
 
-    $pythonZip = Join-Path $tooling "python-3.11.9-embeddable-amd64.zip"
-    $pythonUrl = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embeddable-amd64.zip"
+    $pythonVersion = '3.11.9'
+    $pythonZip = Join-Path $tooling "python-$pythonVersion-embeddable-amd64.zip"
+    $pythonUrl = "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-embeddable-amd64.zip"
     $pythonSha256 = "33b448f95fecb7c6f802157dbd5e6b40a2ad9bfc8b95ca634a06ba4073ad1ac0"
     Invoke-WebRequest -Uri $pythonUrl -OutFile $pythonZip -UseBasicParsing
     $actual = (Get-FileHash -LiteralPath $pythonZip -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -237,23 +253,11 @@ try {
         version = $version
         architecture = "x86_64-windows"
         core_runtime = "rust"
-        python = "3.11.9-embedded"
+        python = "$pythonVersion-embedded"
         built_at_utc = [DateTime]::UtcNow.ToString("o")
     }
     Write-Utf8NoBom -Path (Join-Path $bundle "bundle.json") -Content ($manifest | ConvertTo-Json)
     & $scanScript -Path $bundle -ReportPath (Join-Path $validation 'unpacked-bundle-scan.json')
-    & (Join-Path $bundle "eef.exe") --version
-    & (Join-Path $bundle "eefn.exe") --version
-    & (Join-Path $bundle "python\python.exe") -I -B -c "import sys; print(sys.version)"
-    if (-not $SkipOptionalPythonPackages) {
-        & (Join-Path $bundle "python\python.exe") -I -B -c "import PIL, pyautogui, sounddevice, soundfile, cv2, pyttsx3; print('optional media packages: ok')"
-        if ($LASTEXITCODE -ne 0) { throw "Bundled Python media package import failed" }
-    }
-
-    # Never inventory/sign generated import caches as immutable Python payload.
-    # Refuse dirty staging rather than deleting files or relaxing file hashes.
-    & (Join-Path $PSScriptRoot 'assert-python-payload.ps1') -PythonDirectory (Join-Path $bundle 'python') | Out-Null
-
     $eefPackage = Join-Path $packageRoot "eef"
     $eefnPackage = Join-Path $packageRoot "eefn"
     foreach ($package in @($eefPackage, $eefnPackage)) {
@@ -280,7 +284,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $workspace "tools\README-coordinator.txt") -Destination (Join-Path $eefPackage "README.txt")
     New-Item -ItemType Directory -Path (Join-Path $eefPackage "config") | Out-Null
     Copy-Item -LiteralPath (Join-Path $workspace "config\default_identity.yaml") -Destination (Join-Path $eefPackage "config")
-    Write-Utf8NoBom -Path (Join-Path $eefPackage "bundle.json") -Content (([ordered]@{name="eef";version=$version;architecture="x86_64-windows";runtime="rust";python="3.11.9-embedded"}) | ConvertTo-Json)
+    Write-Utf8NoBom -Path (Join-Path $eefPackage "bundle.json") -Content (([ordered]@{name="eef";version=$version;architecture="x86_64-windows";runtime="rust";python="$pythonVersion-embedded"}) | ConvertTo-Json)
 
     Copy-Item -LiteralPath (Join-Path $bundle "eefn.exe") -Destination $eefnPackage
     Copy-Item -LiteralPath (Join-Path $workspace "tools\README-node.txt") -Destination (Join-Path $eefnPackage "README.txt")
@@ -293,11 +297,30 @@ try {
         Copy-Item -LiteralPath $_.FullName -Destination $nodeTools
     }
     if (-not (Test-Path -LiteralPath (Join-Path $nodeTools 'llama-server.exe'))) { throw 'llama-server.exe is missing from the verified runtime' }
-    Write-Utf8NoBom -Path (Join-Path $eefnPackage "bundle.json") -Content (([ordered]@{name="eefn";version=$version;architecture="x86_64-windows";runtime="rust";python="3.11.9-embedded";llamacpp="b10621";models_included=$false}) | ConvertTo-Json)
+    Write-Utf8NoBom -Path (Join-Path $eefnPackage "bundle.json") -Content (([ordered]@{name="eefn";version=$version;architecture="x86_64-windows";runtime="rust";python="$pythonVersion-embedded";llamacpp="b10621";models_included=$false}) | ConvertTo-Json)
 
     foreach ($package in @($eefPackage, $eefnPackage)) {
+        $product = Split-Path -Leaf $package
+        $python = Join-Path $package 'python\python.exe'
+        $toolchainPath = $env:PATH
+        Push-Location -LiteralPath $package
+        try {
+            # Exercise the role payload using only its own files and Windows DLLs.
+            $env:PATH = Join-Path $env:SystemRoot 'System32'
+            Invoke-RequiredBundleProbe -Executable (Join-Path $package "$product.exe") -Arguments @('--version') -ExpectedOutput "$product $version"
+            Invoke-RequiredBundleProbe -Executable $python -Arguments @('-I', '-B', '-c', 'import sys; print(sys.version.split()[0])') -ExpectedOutput $pythonVersion
+            if ($product -eq 'eefn' -and -not $SkipOptionalPythonPackages) {
+                Invoke-RequiredBundleProbe -Executable $python -Arguments @('-I', '-B', '-c', 'import PIL, pyautogui, sounddevice, soundfile, cv2, pyttsx3')
+            }
+        } finally {
+            $env:PATH = $toolchainPath
+            Pop-Location
+        }
+        Write-Host "Bundle startup probes passed for $product $version"
+
+        # Inventory only immutable payload files, including after import checks.
+        & (Join-Path $PSScriptRoot 'assert-python-payload.ps1') -PythonDirectory (Join-Path $package 'python') | Out-Null
         if ($RepairSourceTemplate) {
-            $product = if ($package -eq $eefPackage) { 'eef' } else { 'eefn' }
             & $repairHintScript -Product $product -Version $version -ManifestTemplate $RepairSourceTemplate -Output (Join-Path $package "$product.repair-source.json")
         }
         $provenance = [ordered]@{

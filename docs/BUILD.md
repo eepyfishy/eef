@@ -34,6 +34,12 @@ success. Reports are retained in ignored `.validation/v<version>/`. Every
 installer also includes dependency provenance and a per-file hash inventory.
 See [ANTIVIRUS.md](ANTIVIRUS.md) for the detection investigation and scan limits.
 
+Before creating either installer, the bundler checks the staged eef and eefn
+executables and their bundled Python at the expected versions without the build
+toolchain on the search path. It also checks optional media imports in the node
+package when those modules are included. A failed launch, unexpected version,
+or failed import stops packaging.
+
 After building, run the installer regression checks in an isolated test
 directory. They use a temporary `APPDATA`, leaving personal startup entries
 alone:

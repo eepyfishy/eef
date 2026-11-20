@@ -97,6 +97,12 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           & ./tools/test-windows-firewall.ps1
+      - name: Windows bundle runtime probe checks (no packaging)
+        if: matrix.os == 'windows-2025' && matrix.mode == 'headless'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tools/test-bundle-runtime-probes.ps1
       - name: Read-only MSI payload planning (synthetic)
         run: |
           node tools/test-msi-version-policy.mjs
