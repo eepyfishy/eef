@@ -364,8 +364,7 @@ async fn install_manifest<G>(
         .prefix(".incoming-")
         .tempdir_in(&versions)?;
     extract_zip(&bytes, staging.path())?;
-    let binary = find_binary(staging.path(), program)
-        .with_context(|| format!("update archive does not contain the {program} executable"))?;
+    let binary = find_update_binary(staging.path(), program)?;
     let metadata_path = binary
         .parent()
         .context("missing update directory")?
@@ -446,17 +445,31 @@ pub fn installation_root(executable: impl AsRef<Path>) -> Result<PathBuf> {
     let parent = executable
         .parent()
         .context("executable has no parent directory")?;
-    if parent
+    if let Some(versions) = parent
         .parent()
-        .and_then(Path::file_name)
-        .and_then(|name| name.to_str())
-        == Some("versions")
+        .filter(|path| path.file_name().is_some_and(|name| name == "versions"))
     {
-        return parent
+        return versions
             .parent()
-            .and_then(Path::parent)
             .map(Path::to_path_buf)
             .context("versioned executable has no installation root");
+    }
+    // Legacy and custom update ZIPs may wrap the application in one folder.
+    // It owns its own bundled files, but settings still belong above versions/.
+    if let Some(version) = parent.parent().filter(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| validate_version(name).is_ok())
+    }) {
+        if let Some(versions) = version
+            .parent()
+            .filter(|path| path.file_name().is_some_and(|name| name == "versions"))
+        {
+            return versions
+                .parent()
+                .map(Path::to_path_buf)
+                .context("versioned executable has no installation root");
+        }
     }
     Ok(parent.to_path_buf())
 }
@@ -733,27 +746,46 @@ pub(crate) fn validate_program(program: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn find_binary(root: &Path, program: &str) -> Option<PathBuf> {
+fn binary_in(root: &Path, program: &str) -> Option<PathBuf> {
     let names = [format!("{program}.exe"), program.to_owned()];
-    for name in &names {
-        let candidate = root.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
+    names
+        .iter()
+        .map(|name| root.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
+pub(crate) fn find_binary(root: &Path, program: &str) -> Option<PathBuf> {
+    if let Some(binary) = binary_in(root, program) {
+        return Some(binary);
     }
     for entry in fs::read_dir(root)
         .ok()?
         .flatten()
         .filter(|entry| entry.path().is_dir())
     {
-        for name in &names {
-            let candidate = entry.path().join(name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
+        if let Some(binary) = binary_in(&entry.path(), program) {
+            return Some(binary);
         }
     }
     None
+}
+
+fn find_update_binary(root: &Path, program: &str) -> Result<PathBuf> {
+    if let Some(binary) = binary_in(root, program) {
+        return Ok(binary);
+    }
+    let mut selected = None;
+    for entry in fs::read_dir(root)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            if let Some(binary) = binary_in(&path, program) {
+                if selected.replace(binary).is_some() {
+                    bail!("update archive contains multiple nested {program} executables")
+                }
+            }
+        }
+    }
+    selected.with_context(|| format!("update archive does not contain the {program} executable"))
 }
 
 fn contains_binary(root: &Path, program: &str) -> bool {
@@ -1267,18 +1299,21 @@ mod tests {
     #[tokio::test]
     async fn update_size_hash_and_existing_versions_preserve_installation() {
         use std::io::Write;
-        for program in ["eef", "eefn"] {
+        for (program, prefix) in [("eef", ""), ("eefn", "wrapped/")] {
             let dir = tempfile::tempdir().unwrap();
             let mut archive = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
             archive
                 .start_file(
-                    format!("{program}.exe"),
+                    format!("{prefix}{program}.exe"),
                     zip::write::SimpleFileOptions::default(),
                 )
                 .unwrap();
             archive.write_all(b"test fixture, never executed").unwrap();
             archive
-                .start_file("bundle.json", zip::write::SimpleFileOptions::default())
+                .start_file(
+                    format!("{prefix}bundle.json"),
+                    zip::write::SimpleFileOptions::default(),
+                )
                 .unwrap();
             archive
                 .write_all(
@@ -1325,10 +1360,31 @@ mod tests {
             let installed = dir
                 .path()
                 .join("versions/0.4.0")
-                .join(format!("{program}.exe"));
+                .join(format!("{prefix}{program}.exe"));
             assert_eq!(
                 fs::read(&installed).unwrap(),
                 b"test fixture, never executed"
+            );
+            assert_eq!(
+                installation_root(&installed).unwrap(),
+                dir.path().canonicalize().unwrap()
+            );
+            let boot = dir.path().join(format!("{program}.exe"));
+            fs::write(&boot, b"older root, never executed").unwrap();
+            assert_eq!(
+                crate::bundle_selection::pending_executable(dir.path(), "0.3.2", program, &boot)
+                    .unwrap(),
+                Some(installed.canonicalize().unwrap())
+            );
+            assert_eq!(
+                crate::bundle_selection::running_slot(dir.path(), "0.4.0", &installed).unwrap(),
+                "0.4.0"
+            );
+            let layout = crate::runtime_layout::RuntimeLayout::from_executable(&installed).unwrap();
+            let config = Path::new("config.json");
+            assert_eq!(
+                layout.configuration(config, config),
+                dir.path().canonicalize().unwrap().join(config)
             );
             bad = manifest.clone();
             bad["url"] = serde_json::json!("http://127.0.0.1:1/not-requested");
@@ -1339,6 +1395,33 @@ mod tests {
                 "0.3.2"
             );
         }
+    }
+
+    #[test]
+    fn update_package_requires_a_unique_nested_target_without_a_root_executable() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let first = root.join("first");
+        fs::create_dir(&first).unwrap();
+        fs::write(first.join("eef.exe"), b"fixture").unwrap();
+        assert_eq!(
+            find_update_binary(root, "eef").unwrap(),
+            first.join("eef.exe")
+        );
+        let second = root.join("second");
+        fs::create_dir(&second).unwrap();
+        fs::write(second.join("eef.exe"), b"fixture").unwrap();
+        assert!(
+            find_update_binary(root, "eef")
+                .unwrap_err()
+                .to_string()
+                .contains("multiple nested")
+        );
+        fs::write(root.join("eef.exe"), b"preferred direct target").unwrap();
+        assert_eq!(
+            find_update_binary(root, "eef").unwrap(),
+            root.join("eef.exe")
+        );
     }
 
     #[tokio::test]

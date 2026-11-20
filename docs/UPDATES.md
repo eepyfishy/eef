@@ -42,6 +42,11 @@ into `versions/<version>`, and
 root executable hands off to the selected version. `previous.txt` supports
 rollback.
 
+A ZIP can place the executable at its root or inside one wrapper folder. When
+the root lacks the executable, the updater requires a single matching wrapper.
+The wrapper supplies the app's bundled files while mutable settings and update
+selection stay at the existing installation root.
+
 Explicit same-build Windows [package repair](PACKAGE-REPAIR.md) uses immutable
 repair generations and slot-aware restart/rollback without changing feeds or
 owner settings. Local `repair --status` and `repair --rollback` work without the

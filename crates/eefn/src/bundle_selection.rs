@@ -97,7 +97,7 @@ pub fn directory(install: &Path, version: &str, slot: &str) -> Result<PathBuf> {
     })
 }
 
-/// Identify only a direct flat/versioned bundle, not an arbitrary executable.
+/// Identify a root or versioned bundle using the update loader's layout.
 pub fn running_slot(install: &Path, version: &str, executable: &Path) -> Result<String> {
     let install = install.canonicalize()?;
     let executable = executable.canonicalize()?;
@@ -107,10 +107,16 @@ pub fn running_slot(install: &Path, version: &str, executable: &Path) -> Result<
     if parent == install {
         return Ok(ROOT_SLOT.into());
     }
-    if parent.parent() != Some(install.join("versions").as_path()) {
-        bail!("running executable is not in a direct installation bundle")
-    }
-    let slot = parent
+    let versions = install.join("versions");
+    let containing_directory = parent.parent().context("missing bundle parent directory")?;
+    let slot_directory = if containing_directory == versions.as_path() {
+        parent
+    } else if containing_directory == versions.join(version).as_path() {
+        containing_directory
+    } else {
+        bail!("running executable is not in an installation bundle")
+    };
+    let slot = slot_directory
         .file_name()
         .and_then(|s| s.to_str())
         .context("invalid bundle name")?;
