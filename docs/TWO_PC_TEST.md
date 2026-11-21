@@ -29,6 +29,18 @@ The [isolated installer regression](BUILD.md#toolchain) covers stale update
 selections. With `-PreviousReleaseDir`, it also covers upgrading actual prior
 installations. Record the physical registration and job checks above separately.
 
+## Remote update preflight (2026-11-21)
+
+The locally packaged development coordinator from `e975866` temporarily
+listened on the private VPN using the existing legacy pairing. The physical
+node registered and passed five application probes. Both roles reported
+`0.4.0-alpha.6`. The remote node was still on the published build.
+
+The explicit updater requires a newer version than the installed version.
+The alpha.7 validation build gives the test a distinct version to target.
+Keep it on the explicit [node update path](COMMANDS.md#explicit-remote-updates)
+and record the built artifact hash and size when selecting it.
+
 ## Pair the nodes and verify the connection
 
 1. Use two owner-approved PCs on a private LAN or overlay. Back up their
