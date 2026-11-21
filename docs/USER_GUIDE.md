@@ -3,11 +3,11 @@
 eef connects your computers into a network of **nodes**. You send requests through
 a node; eef coordinates the work, and nodes provide the models and tools you allow.
 
-This guide describes the **current development source after alpha.6**. The
-published `v0.4.0a6` installers contain fewer commands and use the older setup
-flow. For those installers, start with [First installation](FIRST_RUN.md) and
-[their release notes](RELEASE-0.4.0a6.md). A development feature documented here
-does not become available by changing an alpha install's settings.
+Start with matching [v0.4.0a7 installers](https://github.com/eepyfishy/eef/releases/tag/v0.4.0a7)
+for the wizard and command-based private enrollment. The guide also covers
+ongoing development. Check your installed version and `--help` for the commands
+available to you. For alpha.6, use [the older installation guide](FIRST_RUN.md)
+and [its release notes](RELEASE-0.4.0a6.md).
 
 ## Start here
 
@@ -31,8 +31,7 @@ For your first PC, install both. Another PC can run only `eefn`. Installing `eef
 alone does not make that PC a node. eef uses models offered by connected nodes;
 you do not need a separate model just for the coordinator.
 
-Neither alpha.6 installer bundles a model. Development builds add explicit model
-setup choices, but there is no approved universal default model. You can inspect
+The installers leave model selection to each node owner. You can inspect
 and configure a node, or submit supported explicit tool requests, without a model.
 Interpreting ordinary language needs a selected request interpreter.
 
@@ -41,7 +40,7 @@ Interpreting ordinary language needs a selected request interpreter.
 The running apps own configuration, requests, and automation. Commands and the
 dashboard are interfaces to those services. Keep the apps running when issuing
 commands that contact them. Closing a dashboard tab does not stop an app.
-Development builds support `--no-ui` to run command/API services without the
+Use `--no-ui` to run command/API services without the
 browser interface. UI work is paused, so some newer features have commands only.
 
 Examples use Windows PowerShell. Open a terminal in the app's installation

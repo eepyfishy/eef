@@ -3,9 +3,8 @@
 [User guide](../USER_GUIDE.md) | [Using nodes](USING_NODES.md) |
 [Requests](REQUESTS.md) | [Troubleshooting](TROUBLESHOOTING.md)
 
-The installation steps apply to the published Windows alpha. The command-based
-private enrollment section requires matching **development builds after alpha.6**.
-For the released dashboard flow, use [First installation](../FIRST_RUN.md).
+These steps apply to matching [v0.4.0a7 Windows installers](https://github.com/eepyfishy/eef/releases/tag/v0.4.0a7).
+For alpha.6, see [the older dashboard setup](../FIRST_RUN.md).
 
 ## Install your first PC
 
@@ -17,8 +16,7 @@ For the released dashboard flow, use [First installation](../FIRST_RUN.md).
    **Finish** opens it. The default folders are `%LOCALAPPDATA%\eef` and
    `%LOCALAPPDATA%\eefn`. Choose a folder outside Downloads.
 3. Review your choices and select **Install**. Select **Back** to edit the
-   options before installing. The published alpha presents the same choices
-   on one screen.
+   options before installing.
 4. Open both apps using setup or their Start menu entries. Keep eef
    running whenever you want the network's coordinator available.
 5. Check the node's connection, then configure its permissions and models using
@@ -56,7 +54,7 @@ In the coordinator folder:
 Use matching builds on the two roles. New commands are not included in older
 installers even when their version still belongs to the 0.4.0 alpha series.
 
-For a development build without installed shortcuts, start
+To run the apps without opening their dashboards, start
 `.\eef.exe --no-ui` in one terminal and
 `.\eefn.exe --no-ui` in another, from their respective folders. Those terminals
 remain occupied by the apps; use another terminal for commands. No browser
@@ -64,11 +62,7 @@ controller is needed.
 
 ## Connect both roles on the same PC
 
-Published alpha.6 uses same-user local discovery. Its node dashboard should show
-Connected once eef is available. That older shared-key connection is not sufficient
-for development reviewed execution, which requires private node credentials.
-
-With both matching development apps running under the same Windows account,
+With both matching alpha.7 apps running under the same Windows account,
 inspect the local connection plan from the node folder:
 
 ```powershell
@@ -109,9 +103,9 @@ pairing to make reviewed execution connect. Details are in
 The other PC needs `eefn`; it does not also need its own eef. Both PCs must be
 able to reach the coordinator over your LAN or an owner-managed private network.
 
-- For published alpha.6, create a private connection code in eef's Network view
+- For alpha.6, create a private connection code in eef's Network view
   and enter it in the other node's Network view.
-- For development reviewed execution, provision the other PC's existing stable
+- For alpha.7 reviewed execution, provision the other PC's existing stable
   node ID and use a private, certificate-pinned invitation. Follow the exact
   [two-PC credential commands](../NODE-CREDENTIALS.md#command-based-migration).
   Same-PC `--enroll-local` is not a remote-PC discovery command.

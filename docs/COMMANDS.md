@@ -2,8 +2,9 @@
 
 For a shorter introduction, see the [user guide](USER_GUIDE.md), including
 [node setup](user/USING_NODES.md) and the
-[request-to-result walkthrough](user/REQUESTS.md). This reference includes both
-published commands and individually marked unreleased development features.
+[request-to-result walkthrough](user/REQUESTS.md). Some section headings record
+when a feature was introduced relative to alpha.6. Use `--version` and `--help`
+with your installed apps to check which commands are available.
 
 The unreleased coordinator `interpreter-policies show/list/approve/revoke`
 commands record bounded owner consent without a dashboard. See

@@ -9,28 +9,15 @@ in [the architecture notes](docs/ARCHITECTURE.md); the v0.5 design remains gated
 on stable v0.4 and explicit owner authorization.
 
 Start with the [user guide](docs/USER_GUIDE.md) for installation, node and model
-setup, a complete request walkthrough, and troubleshooting. It distinguishes
-published alpha instructions from commands available only in development builds.
+setup, a complete request walkthrough, and troubleshooting.
 
-**0.4.0a6 alpha** (`0.4.0-alpha.6` internally) is an opt-in two-PC testing release, not
-the complete v0.4.0 roadmap. See [alpha release notes](docs/RELEASE-0.4.0a6.md) for
-what works and what is deferred. Automatic-update feeds are paused because no
-stable release is currently published. Older clients may show a feed-check error.
-The [active core roadmap](docs/ROADMAP-CORE.md) prioritizes command-based usability
-and automation; UI polish is paused. Planned default-node LM bootstrap and
-authorized local/peer workloads do not change the published alpha's behavior.
-This alpha extends [headless commands, model selection and job recovery](docs/COMMANDS.md).
-Feed-based updates reject prereleases; installing an alpha does not enable alpha auto-updates.
-Alpha.5 adds a separate explicitly approved, artifact-pinned remote update command.
-Alpha.6 fixes uncertain job status during coordinator shutdown and clarifies
-errors when a command needs a newer coordinator.
-
-The unreleased development tree now enforces the
-[reviewed workload boundary](docs/EXECUTION-BOUNDARY.md): normal input opens a
-durable review through the running node, text creation awaits approval, and
-unreviewed workload dispatch/resume is retired. Automatic workflows and several
-legacy client/test migrations remain open. This does not change alpha.6 installers
-or declare stable v0.4.0 complete.
+[v0.4.0a7](https://github.com/eepyfishy/eef/releases/tag/v0.4.0a7), internal
+version `0.4.0-alpha.7`, is an opt-in Windows prerelease for two-PC testing.
+It includes wizard installers, command-first private node enrollment, and
+[reviewed requests](docs/EXECUTION-BOUNDARY.md) through the running node.
+Automatic-update feeds are paused and feed-based updates reject prereleases.
+See the [active core roadmap](docs/ROADMAP-CORE.md) for the remaining stable
+release gates and [alpha.6 notes](docs/RELEASE-0.4.0a6.md) for that older build.
 The builds are unsigned. Both v0.3.2 installers have unresolved Defender reports
 on a second PC; see [the investigation](docs/ANTIVIRUS.md). A passing local scan
 is not a Microsoft false-positive verdict. Do not bypass antivirus detections.
@@ -67,10 +54,9 @@ installer refuses to use its download directory and preserves existing config
 on upgrade. These open-source builds are currently unsigned, so Windows may
 show a SmartScreen warning. Do not bypass an antivirus detection.
 
-For a first installation, follow [the getting-started guide](docs/FIRST_RUN.md).
-Install and launch **both apps on the same PC**: the node app automatically
-finds local eef under your Windows account. No connection code, JSON, or port
-number is needed. Nodes keep their identity when renamed or restarted.
+For a first installation, follow [Installation and connection](docs/user/INSTALLATION.md).
+Install and launch **both apps on the same PC**, then use the local enrollment
+steps to pair them. Nodes keep their identity when renamed or restarted.
 eef's Nodes page can request configuration changes; the node owner must
 approve them locally or explicitly allow remote management.
 
