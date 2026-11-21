@@ -185,6 +185,7 @@ try {
     } finally {
         Pop-Location
     }
+    & (Join-Path $PSScriptRoot 'check-windows-app-metadata.ps1') -BinaryDir (Join-Path $workspace 'target\release') -Version $version
     if ($signing) {
         & $signScript -SignToolPath $SignToolPath -CertificateThumbprint $CertificateThumbprint -TimestampUrl $TimestampUrl -Path @(
             (Join-Path $workspace 'target\release\eef.exe'), (Join-Path $workspace 'target\release\eefn.exe')

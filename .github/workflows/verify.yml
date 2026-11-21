@@ -142,6 +142,13 @@ jobs:
         run: |
           cargo build --workspace --bins --examples --no-default-features --locked --offline --quiet -j2
           exit $LASTEXITCODE
+      - name: Verify Windows app metadata
+        if: ${{ !cancelled() && matrix.os == 'windows-2025' && matrix.mode == 'headless' && steps.native_build.outcome == 'success' }}
+        run: |
+          $manifest = cargo metadata --locked --offline --no-deps --format-version 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = (($manifest | ConvertFrom-Json).packages | Where-Object name -ceq 'eef').version
+          & ./tools/check-windows-app-metadata.ps1 -BinaryDir 'target/debug' -Version $version
       - name: Native Windows synthetic regressions (no installer or model download)
         # A fresh successful build is required; never consume stale binaries.
         # Earlier test failure still fails the job: no continue-on-error.

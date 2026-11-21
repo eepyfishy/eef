@@ -19,4 +19,4 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Storage
 zip.workspace = true
 
 [build-dependencies]
-winresource = { version = "0.1.31", default-features = false }
+winresource.workspace = true

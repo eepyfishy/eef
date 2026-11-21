@@ -23,6 +23,8 @@ this project's dependencies must be checked before choosing it.
 ## Signing order and verification
 
 1. Build reviewed first-party source with locked, verified dependencies.
+   The bundler checks each app's Windows product name, executable name, and
+   product version before signing.
 2. Sign `eef.exe` and `eefn.exe` before creating bundle inventories and payloads.
 3. Append payloads to the **unsigned** installer stub, then sign each final
    installer. Never append a payload after signing the stub.

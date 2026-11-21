@@ -489,6 +489,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "winresource",
 ]
 
 [[package]]
@@ -542,6 +543,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "windows-sys 0.61.2",
+ "winresource",
  "x509-parser",
  "zip",
 ]
