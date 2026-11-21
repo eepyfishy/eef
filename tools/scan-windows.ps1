@@ -23,8 +23,15 @@ if (-not $scanner) {
 if (-not (Test-Path -LiteralPath $scanner)) { throw 'Microsoft Defender scanner was not found' }
 
 $started = [DateTime]::UtcNow
-$isDirectory = (Get-Item -LiteralPath $target).PSIsContainer
+$targetBefore = Get-Item -LiteralPath $target
+$isDirectory = $targetBefore.PSIsContainer
 $fileCountBefore = if ($isDirectory) { @(Get-ChildItem -LiteralPath $target -Recurse -File -Force).Count } else { 1 }
+$sha256Before = $null
+$bytesBefore = $null
+if (-not $isDirectory) {
+    $sha256Before = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+    $bytesBefore = $targetBefore.Length
+}
 # This is a scan-only option, not a change to real-time protection. It scans
 # archives and ignores exclusions. A detection cannot count as a passing scan
 # merely because Defender successfully quarantined the file (normal exit 0).
@@ -48,8 +55,18 @@ if ($timedOut) {
 $scanExit = if ($timedOut) { 1460 } else { $process.ExitCode }
 $output = @(($stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()) -split '\r?\n' | Where-Object { $_ })
 $process.Dispose()
-$exists = Test-Path -LiteralPath $target
-$fileCountAfter = if ($exists -and $isDirectory) { @(Get-ChildItem -LiteralPath $target -Recurse -File -Force).Count } elseif ($exists) { 1 } else { 0 }
+$targetAfter = Get-Item -LiteralPath $target -ErrorAction SilentlyContinue
+$exists = $null -ne $targetAfter
+$sameKind = $exists -and $targetAfter.PSIsContainer -eq $isDirectory
+$fileCountAfter = if ($exists -and $targetAfter.PSIsContainer) { @(Get-ChildItem -LiteralPath $target -Recurse -File -Force).Count } elseif ($exists) { 1 } else { 0 }
+$sha256After = $null
+$bytesAfter = $null
+if ($sameKind -and -not $isDirectory) {
+    $sha256After = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+    $bytesAfter = $targetAfter.Length
+}
+$sameFile = $isDirectory -or ($sha256Before -ceq $sha256After -and $bytesBefore -eq $bytesAfter)
+$targetUnchanged = $sameKind -and $fileCountBefore -eq $fileCountAfter -and $sameFile
 $report = [ordered]@{
     started_at_utc = $started.ToString('o')
     finished_at_utc = [DateTime]::UtcNow.ToString('o')
@@ -63,7 +80,11 @@ $report = [ordered]@{
     target_still_exists = $exists
     file_count_before = $fileCountBefore
     file_count_after = $fileCountAfter
-    passed = ($scanExit -eq 0 -and $exists -and $fileCountBefore -eq $fileCountAfter)
+    sha256_before = $sha256Before
+    sha256_after = $sha256After
+    bytes_before = $bytesBefore
+    bytes_after = $bytesAfter
+    passed = ($scanExit -eq 0 -and $targetUnchanged)
     # Avoid publishing the build machine's username or absolute workspace path.
     output = @($output | ForEach-Object { $_.ToString().Replace($target, (Split-Path -Leaf $target)) })
 }
@@ -74,6 +95,7 @@ if ($ReportPath) {
 }
 $output | ForEach-Object { Write-Host $_ }
 if (-not $report.passed) {
+    if ($scanExit -eq 0) { throw "Scan target changed during validation: $(Split-Path -Leaf $target)" }
     throw "Release scan failed for $(Split-Path -Leaf $target), exit $scanExit. Do not execute or distribute this artifact."
 }
 Write-Host "Defender scan passed: $(Split-Path -Leaf $target) (definitions $($status.AntivirusSignatureVersion))"

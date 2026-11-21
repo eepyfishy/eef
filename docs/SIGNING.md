@@ -29,7 +29,9 @@ this project's dependencies must be checked before choosing it.
 3. Append payloads to the **unsigned** installer stub, then sign each final
    installer. Never append a payload after signing the stub.
 4. Verify the complete Authenticode signature and timestamp with SignTool's
-   Authenticode policy, scan final artifacts, and hash the final signed bytes.
+   Authenticode policy and scan the final artifacts. The Defender report records
+   each file's SHA-256 and byte count before and after the scan and requires both
+   to match. Use those values to identify the final signed bytes.
 5. Verify the two uploaded release assets match those final hashes.
 
 Use an explicitly selected signing credential and SHA-256/RFC3161 timestamping.
