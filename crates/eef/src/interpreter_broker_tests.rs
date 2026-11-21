@@ -300,7 +300,15 @@ async fn caller_time_limit_reaches_the_original_grant_and_cannot_be_rewritten_by
         .await
         .unwrap();
     assert!(eefn::interpreter_command::confirmed_node(&result, &command));
-    assert_eq!(result["success"], true);
+    assert_eq!(
+        result["success"],
+        true,
+        "Caller-limit command failed: coordinator_acknowledged={}, outcome_unknown={}, code={}, model_calls={}",
+        result["coordinator_acknowledged"],
+        result["outcome_unknown"],
+        result["error_code"],
+        f.model.calls.load(Ordering::SeqCst),
+    );
     assert_eq!(result["result"]["attempt"]["execution_limit_ms"], 20_000);
     let (attempts, accounts) = f
         .runtime()

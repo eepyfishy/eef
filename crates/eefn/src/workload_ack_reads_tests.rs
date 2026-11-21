@@ -159,7 +159,14 @@ async fn caller_lease_and_session_deadlines_bound_ack_inspection_after_admission
         assert_eq!(ledger.event_workers.available_permits(), 0);
         assert!(blocker.release().0);
         ack_reader_released(&ledger).await;
-        consumed.retire().await.unwrap();
+        // The caller has a bounded wait for finalization. The reserved worker
+        // can still commit the checkpoint after that observation expires.
+        if let Err(error) = consumed.retire().await {
+            assert!(
+                error.downcast_ref::<tokio::time::error::Elapsed>().is_some(),
+                "Unexpected final checkpoint failure for {bound}: {error:#}"
+            );
+        }
         wait_unknown(&ledger, &d).await;
         assert!(consume(&ledger, d).await.is_err());
     }
