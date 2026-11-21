@@ -38,6 +38,11 @@ node registered and passed five application probes. The read-only
 `0.4.0-alpha.6` with no restart pending. The coordinator's source revision
 was verified locally. The preflight measured the remote node's reported version.
 
+The node also reported `remote_updates: true` in its saved and applied
+permissions, and the owner had approved remote management for a separate app
+restart. These were read-only observations. The node checks its current policy
+again when an update or restart is requested.
+
 The explicit updater requires a newer version than the installed version.
 The alpha.7 validation build gives the test a distinct version to target.
 Keep it on the explicit [node update path](COMMANDS.md#explicit-remote-updates)
