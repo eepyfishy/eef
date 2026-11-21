@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$ReleaseDir,
-    [string]$PreviousReleaseDir
+    [string]$PreviousReleaseDir,
+    [ValidatePattern('^[0-9a-f]{40}$')][string]$ExpectedSourceCommit
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,6 +33,16 @@ function Read-InstalledVersion([string]$Destination, [string]$Product) {
         throw "$Product executable identity differs from its bundle manifest"
     }
     return $version
+}
+
+function Assert-InstalledProvenance([string]$Destination, [string]$Product, [string]$VersionLabel, [string]$SourceCommit) {
+    $provenance = Get-Content -Raw -LiteralPath (Join-Path $Destination 'provenance.json') | ConvertFrom-Json
+    if ($provenance.source_commit -ine $SourceCommit -or $provenance.source_dirty -isnot [bool] -or $provenance.source_dirty) {
+        throw "Installed $Product package does not record the expected clean source revision"
+    }
+    if ("$Product $($provenance.version)" -cne $VersionLabel) {
+        throw "Installed package provenance version differs from $VersionLabel"
+    }
 }
 
 function Test-PreviousInstallerUpgrade {
@@ -72,6 +83,7 @@ function Test-PreviousInstallerUpgrade {
         $configHash = (Get-FileHash -LiteralPath $config -Algorithm SHA256).Hash
         Invoke-Installer $CandidateInstaller $destination @('--no-launch')
         if ((Read-InstalledVersion $destination $Product) -cne $CandidateVersion) { throw "Upgrade did not select the expected $Product version" }
+        if ($ExpectedSourceCommit) { Assert-InstalledProvenance $destination $Product $CandidateVersion $ExpectedSourceCommit }
         if ((Get-FileHash -LiteralPath $config -Algorithm SHA256).Hash -cne $configHash) { throw "Upgrade modified the prior $Product configuration" }
         if ((Test-Path -LiteralPath $startup) -ne $expectedStartup) { throw "Upgrade changed the prior $Product startup choice" }
         if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $CandidateBinary -Algorithm SHA256).Hash) {
@@ -132,6 +144,7 @@ try {
             if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256) { throw "Installed file hash mismatch: $($entry.path)" }
         }
         $version = Read-InstalledVersion $destination $name
+        if ($ExpectedSourceCommit) { Assert-InstalledProvenance $destination $name $version $ExpectedSourceCommit }
         if ($name -eq 'eefn') {
             $node = Get-Content -Raw -LiteralPath $config | ConvertFrom-Json
             if ($node.models.ollama.selected.Count -or $node.models.llamacpp.slots.Count -or $node.endpoints.Count) { throw 'Fresh node unexpectedly configured a model or endpoint' }
@@ -141,6 +154,10 @@ try {
             if ($LASTEXITCODE -ne 0) { throw 'Minimal llama.cpp runtime failed to start' }
         }
         $result = [ordered]@{product=$name;version=$version;inventory_files=$inventory.Count;quiet_launch_disabled=$true;startup_preserved=$true;config_preserved=$true;manual_upgrade_selects_new_root=$true;previous_update_selection_backed_up=$true}
+        if ($ExpectedSourceCommit) {
+            $result['source_commit'] = $ExpectedSourceCommit.ToLowerInvariant()
+            $result['installer_sha256'] = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
         if ($previousRelease) {
             $result['previous_installer_upgrade'] = Test-PreviousInstallerUpgrade -Product $name -CandidateInstaller $installer -CandidateVersion $version -CandidateBinary $binary -ConfigRelative $configRelative -StartupName $startupName
         }

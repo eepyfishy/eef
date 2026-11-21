@@ -33,6 +33,22 @@ integrated. Its initial noncomparable/interrupted harness result is separately
 retained; the corrected forty-case run and metadata/lifetime regressions do not
 approve a default or replace full public-node quality acceptance.
 
+## Qwen3-VL output-limit observation (2026-11-21)
+
+An isolated node used the existing loopback Ollama model `qwen3-vl:latest`
+with the original-v1 cases, a 4,096-token context, a 512-token output limit,
+and the disabled-thinking request hint. All nine completed requests returned
+`interpretation_incomplete` with `reasoning_only_output_limit`. The validator
+accepted zero proposals. The hint records what the node requested. Provider
+behavior is observed separately.
+
+The run was stopped because free system drive space was low. The retained
+report in `.validation/interpreter-quality-WFIcbH/results.json` covers nine
+of twenty cases. It used the earlier node binary with SHA-256
+`687a64b9e7fc10c08874666bf5f4f93bb73474268de65dc7cdcf90e27a083cbb`.
+The result leaves this model unapproved for default use and does not establish
+quality on the release candidate.
+
 ## Rejected balanced illustrations (2026-10-18)
 
 The [experiment and criteria fixed before inference](experiments/interpreter-balanced-illustrations.md)

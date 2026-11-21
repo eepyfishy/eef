@@ -54,6 +54,11 @@ This case scans the prior installers and records the before and after installer
 hashes. It checks that upgrade preserves configuration and both startup choices
 across the two roles and installs the same application bytes as a fresh setup.
 
+Pass `-ExpectedSourceCommit` with the full build commit when collecting
+release evidence. The check requires both installed packages to record that
+clean revision and the installed version, including after an upgrade. The
+report records the tested installer hashes with the revision.
+
 Useful switches:
 
 - `-SkipTests` — reuse a test result from the same source revision.
