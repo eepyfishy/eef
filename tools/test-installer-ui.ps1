@@ -18,6 +18,7 @@ public static class EEFWizardTest {
  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window,out uint process);
  [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr window,int id);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window,StringBuilder text,int length);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowLong(IntPtr window,int index);
  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window,uint msg,IntPtr w,IntPtr l);
  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window,int mode);
  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr window,IntPtr dc,uint flags);
@@ -30,8 +31,12 @@ public static class EEFWizardTest {
   return found;
  }
  public static string Text(IntPtr window,int id) {var text=new StringBuilder(4096);GetWindowText(GetDlgItem(window,id),text,text.Capacity);return text.ToString();}
+ public static bool Shown(IntPtr window,int id) {return (GetWindowLong(GetDlgItem(window,id),-16) & 0x10000000) != 0;}
 }
 '@
+function Click-WizardButton([IntPtr]$Window,[int]$Id) {
+    [void][EEFWizardTest]::SendMessage([EEFWizardTest]::GetDlgItem($Window,$Id),0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
+}
 function Save-WizardImage([IntPtr]$Window,[string]$Path) {
     if ($NoScreenshots) { return }
     # Native themed controls need a visible window to render correctly.
@@ -61,34 +66,50 @@ try {
         }
         if ($window -eq [IntPtr]::Zero) { throw 'Installer window did not appear' }
         [void][EEFWizardTest]::ShowWindow($window,0)
+        if ([EEFWizardTest]::Text($window,201) -notlike 'Welcome to eef*' -or [EEFWizardTest]::Shown($window,101)) { throw 'Welcome page did not precede the options' }
+        Save-WizardImage $window (Join-Path $scratch "$name-welcome.png")
+        Click-WizardButton $window 105
+        if ([EEFWizardTest]::Text($window,201) -ne 'Installation options' -or -not [EEFWizardTest]::Shown($window,101)) { throw 'Options page did not open' }
         if ([EEFWizardTest]::Text($window,101) -ne $destination) { throw 'Folder choice not reflected in setup' }
         foreach ($id in @(103,104)) {
             if ([EEFWizardTest]::SendMessage([EEFWizardTest]::GetDlgItem($window,$id),0xF0,[IntPtr]::Zero,[IntPtr]::Zero) -ne [IntPtr]::Zero) { throw 'Unexpected startup or launch opt-in' }
         }
-        Save-WizardImage $window (Join-Path $scratch "$name-welcome.png")
+        Save-WizardImage $window (Join-Path $scratch "$name-options.png")
+        Click-WizardButton $window 103
+        Click-WizardButton $window 105
+        if ([EEFWizardTest]::Text($window,201) -ne 'Review setup' -or [EEFWizardTest]::Text($window,105) -ne 'Install') { throw 'Review page did not open' }
+        $review = [EEFWizardTest]::Text($window,109)
+        if (-not $review.Contains($destination) -or $review -notlike '*Start at sign-in  On*' -or $review -notlike '*Open after setup  No*') { throw 'Review did not reflect the installation options' }
+        if (Test-Path -LiteralPath $destination) { throw 'Review opened after files had already been written' }
+        Click-WizardButton $window 108
+        if ([EEFWizardTest]::Text($window,101) -ne $destination -or [EEFWizardTest]::SendMessage([EEFWizardTest]::GetDlgItem($window,103),0xF0,[IntPtr]::Zero,[IntPtr]::Zero) -eq [IntPtr]::Zero) { throw 'Back lost the selected options' }
+        Click-WizardButton $window 103
+        Click-WizardButton $window 105
+        if ([EEFWizardTest]::Text($window,109) -notlike '*Start at sign-in  Off*') { throw 'Revised startup choice did not reach review' }
+        Save-WizardImage $window (Join-Path $scratch "$name-review.png")
         if ($LayoutOnly) {
             [void][EEFWizardTest]::SendMessage($window,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
             if (-not $child.WaitForExit(10000)) { throw 'Layout check did not close setup' }
             $child=$null
             continue
         }
-        [void][EEFWizardTest]::SendMessage([EEFWizardTest]::GetDlgItem($window,105),0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
+        Click-WizardButton $window 105
         $deadline = [DateTime]::UtcNow.AddSeconds(180)
-        while ([EEFWizardTest]::Text($window,106) -ne 'Finish' -and [DateTime]::UtcNow -lt $deadline) {
+        while ([EEFWizardTest]::Text($window,105) -ne 'Finish' -and [DateTime]::UtcNow -lt $deadline) {
             $status = [EEFWizardTest]::Text($window,107)
             if ($status -like '*needs attention*') { throw $status }
             Start-Sleep -Milliseconds 150
         }
-        if ([EEFWizardTest]::Text($window,106) -ne 'Finish') { throw 'Wizard did not finish' }
+        if ([EEFWizardTest]::Text($window,105) -ne 'Finish' -or [EEFWizardTest]::Text($window,201) -ne 'Installation complete') { throw 'Wizard did not finish' }
         if (-not (Test-Path -LiteralPath (Join-Path $destination "$name.exe"))) { throw 'Wizard did not extract the app' }
         Save-WizardImage $window (Join-Path $scratch "$name-complete.png")
-        [void][EEFWizardTest]::SendMessage([EEFWizardTest]::GetDlgItem($window,106),0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
+        Click-WizardButton $window 105
         if (-not $child.WaitForExit(10000)) { throw 'Finish did not close setup' }
         $child.Refresh()
         if ($child.ExitCode -ne 0) { throw 'Wizard returned an error' }
         $child = $null
     }
-    $result=@{passed=$true;products=@('eef','eefn');native_wizard=$true;isolated_startup=$true;layout_only=[bool]$LayoutOnly}|ConvertTo-Json
+    $result=@{passed=$true;products=@('eef','eefn');native_wizard=$true;review_before_install=$true;back_preserves_options=$true;isolated_startup=$true;layout_only=[bool]$LayoutOnly}|ConvertTo-Json
     [IO.File]::WriteAllText((Join-Path $scratch 'results.json'),$result,[Text.UTF8Encoding]::new($false))
     Write-Host "Native installer UI validation passed. Evidence: $scratch"
 } finally {

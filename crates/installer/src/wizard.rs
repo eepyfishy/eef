@@ -6,8 +6,10 @@ use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::Com::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::Controls::BST_CHECKED;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
+use windows_sys::Win32::UI::Controls::{
+    BST_CHECKED, ICC_PROGRESS_CLASS, INITCOMMONCONTROLSEX, InitCommonControlsEx, PBM_SETPOS,
+};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows_sys::Win32::UI::Shell::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -15,9 +17,26 @@ const LOCATION: i32 = 101;
 const BROWSE: i32 = 102;
 const STARTUP: i32 = 103;
 const LAUNCH: i32 = 104;
-const INSTALL: i32 = 105;
+const NEXT: i32 = 105;
 const CLOSE: i32 = 106;
 const STATUS: i32 = 107;
+const BACK: i32 = 108;
+const REVIEW: i32 = 109;
+const PROGRESS: i32 = 110;
+const HEADING: i32 = 201;
+const INTRO: i32 = 202;
+const LOCATION_LABEL: i32 = 203;
+const OPTIONS_HINT: i32 = 204;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Welcome,
+    Options,
+    Review,
+    Installing,
+    Finished,
+}
+
 #[derive(Default)]
 struct Work {
     percent: u32,
@@ -26,8 +45,7 @@ struct Work {
 }
 struct State {
     work: Arc<Mutex<Work>>,
-    busy: bool,
-    finished: bool,
+    page: Page,
     launch: bool,
     path: PathBuf,
     product: &'static super::Product,
@@ -77,6 +95,93 @@ unsafe fn checked(window: HWND, id: i32) -> bool {
     unsafe { SendMessageW(GetDlgItem(window, id), BM_GETCHECK, 0, 0) == BST_CHECKED as isize }
 }
 
+unsafe fn show_page(window: HWND, state: &mut State, page: Page) {
+    unsafe {
+        state.page = page;
+        let options = page == Page::Options;
+        for id in [
+            LOCATION_LABEL,
+            LOCATION,
+            BROWSE,
+            OPTIONS_HINT,
+            STARTUP,
+            LAUNCH,
+        ] {
+            ShowWindow(
+                GetDlgItem(window, id),
+                if options { SW_SHOW } else { SW_HIDE },
+            );
+        }
+        for (id, visible) in [
+            (REVIEW, page == Page::Review),
+            (PROGRESS, page == Page::Installing),
+            (BACK, matches!(page, Page::Options | Page::Review)),
+            (NEXT, page != Page::Installing),
+            (CLOSE, page != Page::Installing && page != Page::Finished),
+        ] {
+            ShowWindow(
+                GetDlgItem(window, id),
+                if visible { SW_SHOW } else { SW_HIDE },
+            );
+        }
+        let (heading, next, description) = match page {
+            Page::Welcome => (
+                format!("Welcome to {}", state.product.display),
+                "Next",
+                "Choose where to install and whether the app should start automatically.",
+            ),
+            Page::Options => (
+                "Installation options".into(),
+                "Next",
+                "Choose a dedicated folder and how the app should start.",
+            ),
+            Page::Review => (
+                "Review setup".into(),
+                "Install",
+                "Check these settings before installing.",
+            ),
+            Page::Installing => (
+                "Installing".into(),
+                "",
+                "Please wait while setup copies the files and creates the Start menu entry.",
+            ),
+            Page::Finished => (
+                "Installation complete".into(),
+                "Finish",
+                "You can find the app later in the eef folder in the Start menu.",
+            ),
+        };
+        text(window, HEADING, &heading);
+        text(window, INTRO, description);
+        text(window, NEXT, next);
+        text(window, STATUS, "");
+        if page == Page::Review {
+            let startup = if checked(window, STARTUP) {
+                "On"
+            } else {
+                "Off"
+            };
+            let launch = if state.launch { "Yes" } else { "No" };
+            text(
+                window,
+                REVIEW,
+                &format!(
+                    "{}\r\n\r\nFolder\r\n{}\r\n\r\nStart at sign-in  {startup}\r\nOpen after setup  {launch}",
+                    state.product.display,
+                    state.path.display()
+                ),
+            );
+        }
+        if page == Page::Installing {
+            SendMessageW(GetDlgItem(window, PROGRESS), PBM_SETPOS, 0, 0);
+            text(window, STATUS, "Preparing to install…");
+            SetFocus(window);
+        } else {
+            SetFocus(GetDlgItem(window, if options { LOCATION } else { NEXT }));
+        }
+    }
+}
+
 pub fn run(options: Options) -> Result<()> {
     let executable = std::env::current_exe()?;
     let manifest = super::read_manifest(&super::read_payload(&executable)?)?;
@@ -86,14 +191,17 @@ pub fn run(options: Options) -> Result<()> {
     });
     let mut state = Box::new(State {
         work: Arc::new(Mutex::new(Work::default())),
-        busy: false,
-        finished: false,
+        page: Page::Welcome,
         launch: true,
         path: path.clone(),
         product,
     });
     unsafe {
         let _ = CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32);
+        InitCommonControlsEx(&INITCOMMONCONTROLSEX {
+            dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_PROGRESS_CLASS,
+        });
         let class = wide("EEFSetupWindow");
         let instance = GetModuleHandleW(std::ptr::null());
         let wc = WNDCLASSW {
@@ -128,24 +236,19 @@ pub fn run(options: Options) -> Result<()> {
             "STATIC",
             &format!("Welcome to {}", product.display),
             0,
-            201,
+            HEADING,
             28,
             25,
             610,
             32,
         );
-        let description = if manifest.name == "eef" {
-            "eef connects your devices and puts their AI models to work.\r\nInstall the eef device app on this PC too if you want this PC to help."
-        } else {
-            "Let this PC help your eef network. You choose its permissions and models.\r\nIf eef runs on this PC, the device app connects automatically."
-        };
-        control(window, "STATIC", description, 0, 202, 28, 65, 610, 54);
+        control(window, "STATIC", "", 0, INTRO, 28, 65, 610, 54);
         control(
             window,
             "STATIC",
             "Install location",
             0,
-            203,
+            LOCATION_LABEL,
             28,
             135,
             600,
@@ -178,7 +281,7 @@ pub fn run(options: Options) -> Result<()> {
             "STATIC",
             "Installs for your Windows account. No administrator access needed.\r\nExisting settings are kept. No AI model is included or downloaded.",
             0,
-            204,
+            OPTIONS_HINT,
             28,
             210,
             600,
@@ -225,23 +328,28 @@ pub fn run(options: Options) -> Result<()> {
             },
             0,
         );
+        control(window, "STATIC", "", 0, STATUS, 28, 354, 605, 52);
+        control(window, "STATIC", "", 0, REVIEW, 28, 135, 595, 205);
         control(
             window,
-            "STATIC",
-            "Ready to install. Choose Install to continue.",
+            "msctls_progress32",
+            "",
             0,
-            STATUS,
+            PROGRESS,
             28,
-            354,
-            605,
-            52,
+            142,
+            595,
+            18,
+        );
+        control(
+            window, "BUTTON", "Back", WS_TABSTOP, BACK, 263, 423, 110, 36,
         );
         control(
             window,
             "BUTTON",
-            "Install",
+            "Next",
             WS_TABSTOP | BS_DEFPUSHBUTTON as u32,
-            INSTALL,
+            NEXT,
             386,
             423,
             110,
@@ -250,8 +358,10 @@ pub fn run(options: Options) -> Result<()> {
         control(
             window, "BUTTON", "Cancel", WS_TABSTOP, CLOSE, 510, 423, 110, 36,
         );
+        show_page(window, &mut state, Page::Welcome);
         SetTimer(window, 1, 150, None);
         ShowWindow(window, SW_SHOW);
+        SetFocus(GetDlgItem(window, NEXT));
         UpdateWindow(window);
         let mut message = MSG::default();
         while GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) > 0 {
@@ -279,7 +389,7 @@ unsafe extern "system" fn window_proc(
         let state = &mut *pointer;
         match message {
             WM_COMMAND => match (wparam & 0xffff) as i32 {
-                BROWSE if !state.busy => {
+                BROWSE if state.page == Page::Options => {
                     let mut display = [0u16; 260];
                     let title = wide("Choose a dedicated folder for this app");
                     let info = BROWSEINFOW {
@@ -302,35 +412,69 @@ unsafe extern "system" fn window_proc(
                     }
                     0
                 }
-                INSTALL if !state.busy => {
-                    if state.finished {
-                        if let Err(error) = super::launch_installed(
-                            &state.path.join(state.product.executable),
-                            &state.path.join(state.product.config),
-                        ) {
-                            text(window, STATUS, &format!("Could not open the app: {error}"));
+                BACK => {
+                    match state.page {
+                        Page::Options => show_page(window, state, Page::Welcome),
+                        Page::Review => show_page(window, state, Page::Options),
+                        _ => (),
+                    }
+                    0
+                }
+                NEXT | IDOK => {
+                    match state.page {
+                        Page::Welcome => {
+                            show_page(window, state, Page::Options);
+                            return 0;
                         }
-                        return 0;
+                        Page::Options => {
+                            let edit = GetDlgItem(window, LOCATION);
+                            let mut path = vec![0u16; GetWindowTextLengthW(edit) as usize + 1];
+                            let length = GetWindowTextW(edit, path.as_mut_ptr(), path.len() as i32);
+                            let path = String::from_utf16_lossy(&path[..length as usize]);
+                            if path.trim().is_empty() {
+                                text(window, STATUS, "Choose an installation folder first.");
+                                SetFocus(edit);
+                                return 0;
+                            }
+                            match super::absolute(PathBuf::from(path)) {
+                                Ok(path) => state.path = path,
+                                Err(error) => {
+                                    text(
+                                        window,
+                                        STATUS,
+                                        &format!("Could not use this folder: {error}"),
+                                    );
+                                    return 0;
+                                }
+                            }
+                            state.launch = checked(window, LAUNCH);
+                            show_page(window, state, Page::Review);
+                            return 0;
+                        }
+                        Page::Installing => return 0,
+                        Page::Finished => {
+                            if state.launch {
+                                state.launch = false;
+                                if let Err(error) = super::launch_installed(
+                                    &state.path.join(state.product.executable),
+                                    &state.path.join(state.product.config),
+                                ) {
+                                    text(
+                                        window,
+                                        STATUS,
+                                        &format!("Installed, but the app could not open: {error}"),
+                                    );
+                                    return 0;
+                                }
+                            }
+                            DestroyWindow(window);
+                            return 0;
+                        }
+                        Page::Review => (),
                     }
-                    let mut path =
-                        vec![0u16; GetWindowTextLengthW(GetDlgItem(window, LOCATION)) as usize + 1];
-                    GetWindowTextW(
-                        GetDlgItem(window, LOCATION),
-                        path.as_mut_ptr(),
-                        path.len() as i32,
-                    );
-                    let path = String::from_utf16_lossy(&path[..path.len() - 1]);
-                    if path.trim().is_empty() {
-                        text(window, STATUS, "Choose an installation folder first.");
-                        return 0;
-                    }
-                    state.path = PathBuf::from(path);
-                    state.launch = checked(window, LAUNCH);
-                    state.busy = true;
                     let startup = checked(window, STARTUP);
-                    for id in [INSTALL, BROWSE, LOCATION, STARTUP, LAUNCH, CLOSE] {
-                        EnableWindow(GetDlgItem(window, id), 0);
-                    }
+                    show_page(window, state, Page::Installing);
+                    *state.work.lock().unwrap() = Work::default();
                     let work = state.work.clone();
                     let report = work.clone();
                     let destination = state.path.clone();
@@ -354,58 +498,37 @@ unsafe extern "system" fn window_proc(
                     });
                     0
                 }
-                CLOSE if !state.busy => {
+                CLOSE | IDCANCEL if state.page != Page::Installing => {
                     DestroyWindow(window);
                     0
                 }
                 _ => 0,
             },
             WM_TIMER => {
-                if state.busy {
+                if state.page == Page::Installing {
                     let (percent, status, result) = {
                         let mut work = state.work.lock().unwrap();
                         (work.percent, work.message.clone(), work.result.take())
                     };
-                    text(window, STATUS, &format!("{percent}% — {status}"));
+                    if !status.is_empty() {
+                        SendMessageW(
+                            GetDlgItem(window, PROGRESS),
+                            PBM_SETPOS,
+                            percent as usize,
+                            0,
+                        );
+                        text(window, STATUS, &format!("{percent}% — {status}"));
+                    }
                     if let Some(result) = result {
-                        state.busy = false;
-                        EnableWindow(GetDlgItem(window, CLOSE), 1);
-                        EnableWindow(GetDlgItem(window, INSTALL), 1);
                         match result {
-                            Ok(()) => {
-                                state.finished = true;
-                                text(
-                                    window,
-                                    STATUS,
-                                    "You’re ready. Open the app to see connection status, choose permissions, and add models. Find it later in Start → eef.",
-                                );
-                                text(window, INSTALL, "Open app");
-                                text(window, CLOSE, "Finish");
-                                if state.launch {
-                                    if let Err(error) = super::launch_installed(
-                                        &state.path.join(state.product.executable),
-                                        &state.path.join(state.product.config),
-                                    ) {
-                                        text(
-                                            window,
-                                            STATUS,
-                                            &format!(
-                                                "Installed, but the app could not open: {error}"
-                                            ),
-                                        );
-                                    }
-                                }
-                            }
+                            Ok(()) => show_page(window, state, Page::Finished),
                             Err(error) => {
+                                show_page(window, state, Page::Review);
                                 text(
                                     window,
                                     STATUS,
                                     &format!("Installation needs attention: {error}"),
                                 );
-                                text(window, INSTALL, "Try again");
-                                for id in [BROWSE, LOCATION, STARTUP, LAUNCH] {
-                                    EnableWindow(GetDlgItem(window, id), 1);
-                                }
                             }
                         }
                     }
@@ -413,7 +536,7 @@ unsafe extern "system" fn window_proc(
                 0
             }
             WM_CLOSE => {
-                if !state.busy {
+                if state.page != Page::Installing {
                     DestroyWindow(window);
                 }
                 0

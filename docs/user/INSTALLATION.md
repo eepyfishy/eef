@@ -12,12 +12,14 @@ For the released dashboard flow, use [First installation](../FIRST_RUN.md).
 1. Obtain `eef-installer.exe` and `eefn-installer.exe` from the project's
    [GitHub releases](https://github.com/eepyfishy/eef/releases). Read the notes for
    the version you choose. These are test releases, not stable v0.4.0.
-2. Run each installer. Keep the recommended dedicated folder, normally
-   `%LOCALAPPDATA%\eef` and `%LOCALAPPDATA%\eefn`, or choose separate dedicated
-   folders. Installation directly into the download folder is refused.
-3. Choose whether each app should start when you sign in. Startup is optional;
-   ordinary app startup runs as your Windows user.
-4. Launch both apps using the installer or their installed shortcuts. Keep eef
+2. Run each installer. In the new setup wizard, select **Next** to choose a
+   dedicated install folder, whether the app starts at sign-in, and whether
+   **Finish** opens it. The default folders are `%LOCALAPPDATA%\eef` and
+   `%LOCALAPPDATA%\eefn`. Choose a folder outside Downloads.
+3. Review your choices and select **Install**. Select **Back** to edit the
+   options before installing. The published alpha presents the same choices
+   on one screen.
+4. Open both apps using setup or their Start menu entries. Keep eef
    running whenever you want the network's coordinator available.
 5. Check the node's connection, then configure its permissions and models using
    [Using nodes](USING_NODES.md).
