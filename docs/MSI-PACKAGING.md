@@ -123,6 +123,13 @@ node Python caches. The earlier filename/cache refusals remain recorded.
 No cache contents or inventories were changed, copied or repackaged. Those old
 payloads are not the current application source and were not relabelled as such.
 
+The November 21 read-only check also verified the exact extracted bundles from
+the clean command-first build at `e975866`. The planner selected 53 eef files
+(48,573,263 bytes) and 2,286 eef node files (288,959,309 bytes). It omitted
+the mutable configuration for each role. The plans use a test namespace and
+the verified alpha.6 numeric mapping. Package authoring, upgrades and rollback
+remain separate checks.
+
 ```text
 node tools/msi-payload-plan.mjs --help
 node tools/msi-payload-plan.mjs --bundle PATH --role eefn --namespace PROJECT_UUID --expected-version PACKAGE_SEMVER --msi-version MAJOR.MINOR.BUILD

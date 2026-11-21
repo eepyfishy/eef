@@ -118,9 +118,11 @@ then run `node tools/test-first-run.mjs`. It uses installed Chrome, or the
 browser path in `EEF_TEST_BROWSER`; no browser is downloaded.
 Reports and screenshots stay in ignored `.validation/first-run-*` directories.
 
-`tools/test-installer-ui.ps1 -ReleaseDir .\release\v0.3.2` exercises each
-native setup window with isolated startup settings, folder choice, Install,
-and Finish. It retains welcome/completion screenshots and scan reports.
+`tools/test-installer-ui.ps1 -ReleaseDir PATH` exercises the native wizard with
+isolated startup settings. It checks that Back retains options and Review
+precedes file writes. The report records each tested installer hash alongside
+the Defender scans. Use `-LayoutOnly` to stop at Review and verify that
+cancelling leaves the destination untouched.
 
 The [real CPU inference test](CLIENT-ACCEPTANCE.md#running-the-checks) uses an
 unpacked runtime bundle and an explicit catalog candidate. You can reuse a

@@ -7,6 +7,7 @@ $scratch = Join-Path $workspace ('.validation\wizard-test-' + [guid]::NewGuid().
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $savedAppData = $env:APPDATA
 $child = $null
+$installerHashes = [ordered]@{}
 Add-Type -AssemblyName System.Drawing
 Add-Type @'
 using System;
@@ -55,6 +56,7 @@ try {
     $env:APPDATA = Join-Path $scratch 'appdata'
     foreach ($name in @('eef','eefn')) {
         $installer = Join-Path $release "$name-installer.exe"
+        $installerHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
         & (Join-Path $PSScriptRoot 'scan-windows.ps1') -Path $installer -ReportPath (Join-Path $scratch "$name-scan.json")
         $destination = Join-Path $scratch $name
         $child = Start-Process -FilePath $installer -ArgumentList @('--install-dir',('"'+$destination+'"'),'--no-launch') -WindowStyle Hidden -PassThru
@@ -90,26 +92,30 @@ try {
         if ($LayoutOnly) {
             [void][EEFWizardTest]::SendMessage($window,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
             if (-not $child.WaitForExit(10000)) { throw 'Layout check did not close setup' }
-            $child=$null
-            continue
+            if (Test-Path -LiteralPath $destination) { throw 'Cancelling from review wrote an installation' }
+        } else {
+            Click-WizardButton $window 105
+            $deadline = [DateTime]::UtcNow.AddSeconds(180)
+            while ([EEFWizardTest]::Text($window,105) -ne 'Finish' -and [DateTime]::UtcNow -lt $deadline) {
+                $status = [EEFWizardTest]::Text($window,107)
+                if ($status -like '*needs attention*') { throw $status }
+                Start-Sleep -Milliseconds 150
+            }
+            if ([EEFWizardTest]::Text($window,105) -ne 'Finish' -or [EEFWizardTest]::Text($window,201) -ne 'Installation complete') { throw 'Wizard did not finish' }
+            if (-not (Test-Path -LiteralPath (Join-Path $destination "$name.exe"))) { throw 'Wizard did not extract the app' }
+            Save-WizardImage $window (Join-Path $scratch "$name-complete.png")
+            Click-WizardButton $window 105
+            if (-not $child.WaitForExit(10000)) { throw 'Finish did not close setup' }
         }
-        Click-WizardButton $window 105
-        $deadline = [DateTime]::UtcNow.AddSeconds(180)
-        while ([EEFWizardTest]::Text($window,105) -ne 'Finish' -and [DateTime]::UtcNow -lt $deadline) {
-            $status = [EEFWizardTest]::Text($window,107)
-            if ($status -like '*needs attention*') { throw $status }
-            Start-Sleep -Milliseconds 150
-        }
-        if ([EEFWizardTest]::Text($window,105) -ne 'Finish' -or [EEFWizardTest]::Text($window,201) -ne 'Installation complete') { throw 'Wizard did not finish' }
-        if (-not (Test-Path -LiteralPath (Join-Path $destination "$name.exe"))) { throw 'Wizard did not extract the app' }
-        Save-WizardImage $window (Join-Path $scratch "$name-complete.png")
-        Click-WizardButton $window 105
-        if (-not $child.WaitForExit(10000)) { throw 'Finish did not close setup' }
         $child.Refresh()
         if ($child.ExitCode -ne 0) { throw 'Wizard returned an error' }
         $child = $null
+        if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash -ine $installerHash) {
+            throw "The $name installer changed during the wizard test"
+        }
+        $installerHashes[$name] = $installerHash
     }
-    $result=@{passed=$true;products=@('eef','eefn');native_wizard=$true;review_before_install=$true;back_preserves_options=$true;isolated_startup=$true;layout_only=[bool]$LayoutOnly}|ConvertTo-Json
+    $result=@{passed=$true;products=@('eef','eefn');installer_sha256=$installerHashes;native_wizard=$true;review_before_install=$true;back_preserves_options=$true;isolated_startup=$true;layout_only=[bool]$LayoutOnly}|ConvertTo-Json
     [IO.File]::WriteAllText((Join-Path $scratch 'results.json'),$result,[Text.UTF8Encoding]::new($false))
     Write-Host "Native installer UI validation passed. Evidence: $scratch"
 } finally {
