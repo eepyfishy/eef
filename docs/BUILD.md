@@ -54,6 +54,11 @@ This case scans the prior installers and records the before and after installer
 hashes. It checks that upgrade preserves configuration and both startup choices
 across the two roles and installs the same application bytes as a fresh setup.
 
+The EXE installer stages and synchronizes each payload file before replacing the
+installed copy. A failed extraction or refused replacement leaves that file's
+previous bytes in place. Existing configuration is kept, including a configuration
+created while setup is copying files. Whole-install rollback is a separate gate.
+
 Pass `-ExpectedSourceCommit` with the full build commit when collecting
 release evidence. The check requires both installed packages to record that
 clean revision and the installed version, including after an upgrade. The

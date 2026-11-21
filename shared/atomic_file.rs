@@ -9,7 +9,10 @@ use std::path::Path;
 #[path = "windows_atomic_file.rs"]
 mod windows;
 
-fn replace_with(path: &Path, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+pub fn replace_with(
+    path: &Path,
+    write: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<()> {
     if path.file_name().is_none() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -51,7 +54,7 @@ pub fn create(path: &Path, bytes: &[u8]) -> io::Result<()> {
     create_with(path, |file| file.write_all(bytes))
 }
 
-fn create_with(path: &Path, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+pub fn create_with(path: &Path, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
     if path.file_name().is_none() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,

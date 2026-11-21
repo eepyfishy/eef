@@ -247,38 +247,25 @@ fn extract_payload(
             continue;
         }
         let output = destination.join(&relative);
-        if should_preserve_config(product, &relative) && output.exists() {
-            continue;
-        }
         if entry.is_dir() {
             fs::create_dir_all(&output)?;
             continue;
         }
-        if let Some(parent) = output.parent() {
-            fs::create_dir_all(parent)?;
+        let write = |file: &mut File| std::io::copy(&mut entry, file).map(|_| ());
+        if should_preserve_config(product, &relative) {
+            if output.exists() {
+                continue;
+            }
+            match atomic_file::create_with(&output, write) {
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                result => {
+                    result.with_context(|| format!("create settings: {}", output.display()))?
+                }
+            }
+        } else {
+            atomic_file::replace_with(&output, write)
+                .with_context(|| format!("install application file: {}", output.display()))?;
         }
-        let next = output.with_extension(format!(
-            "{}installing",
-            output
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .map(|extension| format!("{extension}."))
-                .unwrap_or_default()
-        ));
-        {
-            let mut file = File::create(&next)?;
-            std::io::copy(&mut entry, &mut file)?;
-            file.sync_all()?;
-        }
-        if output.exists() {
-            fs::remove_file(&output).with_context(|| {
-                format!(
-                    "close the running application and retry: {}",
-                    output.display()
-                )
-            })?;
-        }
-        fs::rename(&next, &output)?;
     }
     Ok(())
 }
@@ -514,6 +501,67 @@ fn show_error(message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    fn zip_payload(name: &str, data: &[u8]) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        writer.start_file(name, options).unwrap();
+        writer.write_all(data).unwrap();
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn failed_extraction_preserves_the_previous_file_and_can_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("eefn.exe");
+        let old_stage = dir.path().join("eefn.exe.installing");
+        fs::write(&path, b"installed before the update").unwrap();
+        fs::write(&old_stage, b"existing unrelated file").unwrap();
+        let contents = b"complete replacement for the installer fixture";
+        let valid = zip_payload("eefn.exe", contents);
+        let mut corrupt = valid.clone();
+        let offset = corrupt
+            .windows(contents.len())
+            .position(|data| data == contents)
+            .unwrap();
+        corrupt[offset] ^= 1;
+
+        assert!(extract_payload(&corrupt, dir.path(), "eefn", &None).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"installed before the update");
+        assert_eq!(fs::read(&old_stage).unwrap(), b"existing unrelated file");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+
+        extract_payload(&valid, dir.path(), "eefn", &None).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), contents);
+        assert_eq!(fs::read(&old_stage).unwrap(), b"existing unrelated file");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn delete_locked_install_file_survives_a_refused_replacement() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("eef.exe");
+        fs::write(&path, b"previous application").unwrap();
+        let guard = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&path)
+            .unwrap();
+        let payload = zip_payload("eef.exe", b"updated application");
+
+        assert!(extract_payload(&payload, dir.path(), "eef", &None).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"previous application");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        drop(guard);
+
+        extract_payload(&payload, dir.path(), "eef", &None).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"updated application");
+    }
 
     #[cfg(windows)]
     #[test]
