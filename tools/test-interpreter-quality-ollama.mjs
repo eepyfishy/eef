@@ -74,7 +74,10 @@ try{
    if(mode==='valid-unknown-context')assert.equal(report.prepared_residency.context_tokens,null);
   }else{
    assert.equal(report.harness_completed,false);assert.equal(calls.length,1,'No case after uncertain provider state');assert.equal(report.cases.length,1);
-   if(mode==='timeout')assert.equal(report.cases[0].reply.error_code,'interpretation_timeout');
+   if(mode==='timeout'){
+    assert.equal(report.cases[0].reply.error_code,'interpretation_timeout');
+    assert.match(out,/MISMATCH \(proposal_not_accepted, error_code=interpretation_timeout\)/);
+   }
   }
  }
  assert.equal(proxyCalls,0,'Provider and owner inspection must bypass process proxy settings');

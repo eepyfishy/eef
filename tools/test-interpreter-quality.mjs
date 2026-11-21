@@ -215,7 +215,15 @@ try{
   const score=grade(item,value);report.cases.push({id:item.id,input:item.input,
    expected:{intents:item.intents,workloads:item.workloads,clarification:item.clarification,capabilities:item.capabilities||[]},
    ...score,elapsed_ms:Math.round(performance.now()-begin),reply:value});
-  console.log(`${item.id}: ${score.matched?'match':'MISMATCH'} (${score.reasons.join(', ')||'accepted'})`);
+  // Preserve typed failure evidence in the live log even if the run is interrupted.
+  const reasons=[...score.reasons];
+  if(!value.success){
+   for(const key of ['error_code','completion_reason','rejection_reason']){
+    const code=value[key];
+    if(typeof code==='string'&&/^[a-z_]{1,64}$/.test(code))reasons.push(`${key}=${code}`);
+   }
+  }
+  console.log(`${item.id}: ${score.matched?'match':'MISMATCH'} (${reasons.join(', ')||'accepted'})`);
   if(sharedOllama){
    report.last_observed_residency=await inspectProvider();
    if(!value.success&&(!['interpretation_invalid','interpretation_incomplete'].includes(value.error_code)
