@@ -360,6 +360,7 @@ try {
     foreach ($installer in @($eefRelease, $eefnRelease)) {
         & $scanScript -Path $installer -ReportPath (Join-Path $validation ((Split-Path -Leaf $installer) + '.scan.json'))
     }
+    & (Join-Path $PSScriptRoot 'check-windows-release-assets.ps1') -ReleaseDir $release -ScanReportDir $validation | Out-Null
     if ($RepairSourceTemplate) {
         foreach ($product in @('eef','eefn')) {
             $package = if ($product -eq 'eef') { $eefPackage } else { $eefnPackage }

@@ -32,7 +32,11 @@ this project's dependencies must be checked before choosing it.
    Authenticode policy and scan the final artifacts. The Defender report records
    each file's SHA-256 and byte count before and after the scan and requires both
    to match. Use those values to identify the final signed bytes.
-5. Verify the two uploaded release assets match those final hashes.
+5. Save the GitHub REST release response locally. Run
+   `tools/check-windows-release-assets.ps1 -ReleaseDir PATH -ScanReportDir PATH -GitHubReleaseJson PATH`
+   to match exactly two uploaded installer assets by name, SHA-256, and byte
+   count. `-ScanReportDir` is the bundle's `.validation/v<version>/` directory.
+   The bundler runs the same check against the local files before reporting success.
 
 Use an explicitly selected signing credential and SHA-256/RFC3161 timestamping.
 `tools/bundle-windows.ps1` accepts `-RequireSigning`, `-SignToolPath`,
