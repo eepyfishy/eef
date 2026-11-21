@@ -1,16 +1,21 @@
 // Real headless apps, two logical nodes on one PC. No models or installed apps.
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
+import {access,mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
 import {createServer as createHttpServer} from 'node:http';
 import {randomUUID} from 'node:crypto';
 const root=resolve(import.meta.dirname,'..'),bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
+const executables={
+ eef:join(resolve(process.env.EEF_TEST_EEF_BINARY_DIR||bin),'eef.exe'),
+ eefn:join(resolve(process.env.EEF_TEST_EEFN_BINARY_DIR||bin),'eefn.exe'),
+};
+await Promise.all(Object.values(executables).map(path=>access(path)));
 const scratch=await mkdtemp(join(root,'.validation/local-enrollment-')),children=[];
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),
   PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
-function start(name,args){const child=spawn(join(bin,name+'.exe'),args,{cwd:root,windowsHide:true,env,stdio:['ignore','pipe','pipe']});
+function start(name,args){const child=spawn(executables[name],args,{cwd:root,windowsHide:true,env,stdio:['ignore','pipe','pipe']});
  let out='',err='';child.stdout.on('data',b=>out=(out+b).slice(-1048576));child.stderr.on('data',b=>err=(err+b).slice(-1048576));
  child.result=new Promise((r,j)=>{child.on('error',j);child.on('close',code=>r({code,out,err}));});children.push(child);return child;}
 async function cli(name,config,args,ok=true,json=true){const c=start(name,['--config',config,...(json?['--json']:[]),...args]);
@@ -68,6 +73,9 @@ try{
   await until(async()=>(await json(url+'/api/diagnostics')).registration==='accepted','node received current registration acknowledgement');
   const setup=await cli('eefn',config,['setup']);assert.equal(setup.registration,'accepted');
   assert.equal(setup.model_inference_requested,false);assert.equal(setup.execution_authorized,false);
+  const registration=await cli('eefn',config,['setup','--wait-registration-seconds','30']);
+  assert.equal(registration.outcome,'accepted');
+  assert.equal(registration.last_setup.transport,'pinned_tls13');
  }
  assert(nodes[0].key!==nodes[1].key,'each node needs independent credentials');assert.equal(nodes[0].certificate,nodes[1].certificate);
  phase='existing_trust_reuse';

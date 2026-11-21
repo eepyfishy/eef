@@ -77,6 +77,32 @@ existing output directory. The release directory contains exactly two
 self-extracting installers: one for eef and one for eefn. A combined ignored
 staging bundle is removed by default; use `-KeepBundle` for local diagnostics.
 
+## Local command-first installer validation (2026-11-21)
+
+The isolated Windows build used clean revision
+`e975866996db5247cebdadec6d92c49f63b5f048` and the development version
+`0.4.0-alpha.6`. The build passed 1,882 local Rust tests with one ignored.
+Staged startup, embedded Python, optional media imports, and the installed
+llama.cpp startup probe passed. Defender scanned both final installers with
+engine `1.1.26100.4` and definitions `1.463.390.0`.
+
+| Local installer | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `eef-installer.exe` | 23,494,930 | `07b9ba9202d52fd9b37bdd258c3ed1e49dea6561d92ff2e99f4cb5a01d2f9e51` |
+| `eefn-installer.exe` | 114,903,299 | `637ef50d93d88dbd9c2a31ce8823180d5553f49ff78e3b7b6f3fc77182269702` |
+
+Fresh installs and real upgrades from the published alpha.5 installers
+preserved configuration and startup choices in isolated directories. The
+fresh and upgraded executables matched, and both recorded the expected clean
+revision. The model-free private pairing fixture then used the installed
+executables. Both logical nodes confirmed registration over pinned TLS through
+`eefn setup --wait-registration-seconds 30`. The fixture also covered explicit
+restart consent, saved trust reuse, revocation, and lost replies without replay.
+
+Evidence is retained in the local installer and pairing reports. This
+checkpoint covers one Windows PC. Physical two-PC operation and Authenticode
+verification remain open.
+
 ## First-run browser regression (0.3.2)
 
 `tools/test-first-run.mjs` launches isolated eef and eefn processes, with random
