@@ -54,9 +54,10 @@ This case scans the prior installers and records the before and after installer
 hashes. It checks that upgrade preserves configuration and both startup choices
 across the two roles and installs the same application bytes as a fresh setup.
 
-The EXE installer stages and synchronizes each payload file before replacing the
-installed copy. A failed extraction or refused replacement leaves that file's
-previous bytes in place. Existing configuration is kept, including a configuration
+The EXE installer reads and verifies every archive entry before writing to the
+destination. It then stages and synchronizes each payload file before replacing
+the installed copy. Corrupt payloads fail before any installation write. A refused
+file replacement leaves that file's previous bytes in place. Existing configuration is kept, including a configuration
 created while setup is copying files. Whole-install rollback is a separate gate.
 Setup also reports an unsuccessful app exit during its initial launch wait.
 

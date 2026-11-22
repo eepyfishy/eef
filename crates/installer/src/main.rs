@@ -80,7 +80,6 @@ fn install(options: Options, progress: Progress) -> Result<()> {
         }
     };
     reject_download_directory(&executable, &install_dir)?;
-    check_install_space(&install_dir, unpacked_size(&payload)?)?;
     extract_payload(&payload, &install_dir, &manifest.name, &progress)?;
     if manifest.name == "eef" {
         ensure_coordinator_secret(&install_dir.join(product.config))?;
@@ -189,12 +188,23 @@ fn read_manifest(payload: &[u8]) -> Result<BundleManifest> {
     bail!("installer payload has no bundle.json")
 }
 
-fn unpacked_size(payload: &[u8]) -> Result<u64> {
+fn verified_unpacked_size(payload: &[u8]) -> Result<u64> {
     let mut archive = ZipArchive::new(Cursor::new(payload))?;
     let mut total = 0_u64;
     for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        entry
+            .enclosed_name()
+            .context("unsafe path in installer payload")?;
+        let expected = entry.size();
+        let actual = std::io::copy(&mut entry, &mut std::io::sink())
+            .context("verify installer payload before changing installed files")?;
+        anyhow::ensure!(
+            actual == expected,
+            "installer entry size differs from its declaration"
+        );
         total = total
-            .checked_add(archive.by_index(index)?.size())
+            .checked_add(actual)
             .context("installer payload is too large")?;
     }
     Ok(total)
@@ -228,6 +238,8 @@ fn extract_payload(
     product: &str,
     progress: &Progress,
 ) -> Result<()> {
+    let required = verified_unpacked_size(payload)?;
+    check_install_space(destination, required)?;
     fs::create_dir_all(destination)?;
     let mut archive = ZipArchive::new(Cursor::new(payload))?;
     let entries = archive.len();
@@ -519,6 +531,38 @@ mod tests {
         writer.start_file(name, options).unwrap();
         writer.write_all(data).unwrap();
         writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn corrupt_later_entry_is_refused_before_any_installation_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let existing = dir.path().join("existing");
+        fs::create_dir(&existing).unwrap();
+        fs::write(existing.join("eefn.exe"), b"previous application").unwrap();
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        writer.start_file("eefn.exe", options).unwrap();
+        writer.write_all(b"updated application").unwrap();
+        writer.start_file("later-runtime.dll", options).unwrap();
+        let tail = b"later payload entry with invalid checksum";
+        writer.write_all(tail).unwrap();
+        let mut payload = writer.finish().unwrap().into_inner();
+        let offset = payload
+            .windows(tail.len())
+            .position(|bytes| bytes == tail)
+            .unwrap();
+        payload[offset] ^= 1;
+
+        assert!(extract_payload(&payload, &existing, "eefn", &None).is_err());
+        assert_eq!(
+            fs::read(existing.join("eefn.exe")).unwrap(),
+            b"previous application"
+        );
+        assert_eq!(fs::read_dir(&existing).unwrap().count(), 1);
+        let fresh = dir.path().join("fresh");
+        assert!(extract_payload(&payload, &fresh, "eefn", &None).is_err());
+        assert!(!fresh.exists());
     }
 
     #[test]
