@@ -263,6 +263,7 @@ fn extract_payload(
     let installation_lock = lock_options.open(destination.join(INSTALL_LOCK))?;
     fs2::FileExt::try_lock_exclusive(&installation_lock)
         .context("Another setup is using this folder. Wait for it to finish before retrying")?;
+    validate_installation_role(destination, product)?;
     let _replacement_guards = replacement_guards(payload, destination, product)?;
     let mut archive = ZipArchive::new(Cursor::new(payload))?;
     let entries = archive.len();
@@ -303,6 +304,27 @@ fn extract_payload(
         }
     }
     Ok(installation_lock)
+}
+
+fn validate_installation_role(destination: &Path, expected: &str) -> Result<()> {
+    let bytes = match fs::read(destination.join("bundle.json")) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).context("Read the installed package identity before upgrading");
+        }
+    };
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+    let installed: BundleManifest = serde_json::from_slice(bytes).context(
+        "Cannot read this folder's package identity. Choose another installation folder",
+    )?;
+    anyhow::ensure!(
+        installed.name == expected,
+        "This folder contains {}. Choose a separate folder for {}",
+        product(&installed.name)?.display,
+        product(expected)?.display
+    );
+    Ok(())
 }
 
 fn replacement_guards(payload: &[u8], destination: &Path, product: &str) -> Result<Vec<File>> {
@@ -738,6 +760,49 @@ mod tests {
             assert!(extract_payload(&payload, &destination, "eefn", &None).is_err());
             assert!(!destination.exists());
         }
+    }
+
+    #[test]
+    fn role_mismatch_refuses_extraction_and_preserves_existing_package_files() {
+        for (installed, incoming) in [("eef", "eefn"), ("eefn", "eef")] {
+            let dir = tempfile::tempdir().unwrap();
+            let manifest =
+                serde_json::to_vec(&serde_json::json!({"name":installed,"version":"0.3.2"}))
+                    .unwrap();
+            fs::write(dir.path().join("bundle.json"), &manifest).unwrap();
+            fs::write(dir.path().join("owner-settings"), b"owner data").unwrap();
+            let incoming_executable = format!("{incoming}.exe");
+            let payload = zip_payload(&incoming_executable, b"incoming application");
+
+            let error = extract_payload(&payload, dir.path(), incoming, &None).unwrap_err();
+            assert!(error.to_string().contains("Choose a separate folder"));
+            assert!(!dir.path().join(incoming_executable).exists());
+            assert_eq!(fs::read(dir.path().join("bundle.json")).unwrap(), manifest);
+            assert_eq!(
+                fs::read(dir.path().join("owner-settings")).unwrap(),
+                b"owner data"
+            );
+        }
+    }
+
+    #[test]
+    fn matching_legacy_package_identity_accepts_bom_and_extra_manifest_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bundle.json");
+        fs::write(
+            &path,
+            b"\xef\xbb\xbf{\"name\":\"eefn\",\"version\":\"0.3.2\",\"runtime\":\"rust\"}",
+        )
+        .unwrap();
+        validate_installation_role(dir.path(), "eefn").unwrap();
+        let payload = zip_payload("eefn.exe", b"updated node");
+        extract_payload(&payload, dir.path(), "eefn", &None).unwrap();
+        assert_eq!(
+            fs::read(dir.path().join("eefn.exe")).unwrap(),
+            b"updated node"
+        );
+        fs::write(&path, b"{broken identity").unwrap();
+        assert!(validate_installation_role(dir.path(), "eefn").is_err());
     }
 
     #[cfg(windows)]

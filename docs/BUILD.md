@@ -63,6 +63,9 @@ An OS lock on `.eef-install.lock` serializes setup for each destination through
 configuration, shortcuts and launch. A second setup for that folder asks the
 user to wait. The lock file is retained for reuse and the OS releases the lock
 when the setup process exits.
+Setup also reads the existing `bundle.json` before extraction and requires the
+installed role to match. Use separate destination folders for the coordinator
+and node. Older manifests with a UTF-8 BOM and extra metadata remain compatible.
 It then stages and synchronizes each payload file before replacing
 the installed copy. Corrupt payloads fail before any installation write. A refused
 file replacement leaves that file's previous bytes in place. Existing configuration is kept, including a configuration
