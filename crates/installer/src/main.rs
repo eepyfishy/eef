@@ -81,6 +81,8 @@ fn install(options: Options, progress: Progress) -> Result<()> {
         }
     };
     reject_download_directory(&executable, &install_dir)?;
+    reject_cmd_text(&install_dir.join(product.executable).to_string_lossy())?;
+    reject_cmd_text(&install_dir.join(product.config).to_string_lossy())?;
     let _installation_lock = extract_payload(&payload, &install_dir, &manifest.name, &progress)?;
     if manifest.name == "eef" {
         ensure_coordinator_secret(&install_dir.join(product.config))?;

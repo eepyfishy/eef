@@ -71,6 +71,7 @@ the installed copy. Corrupt payloads fail before any installation write. A refus
 file replacement leaves that file's previous bytes in place. Existing configuration is kept, including a configuration
 created while setup is copying files. Whole-install rollback is a separate gate.
 Setup also reports an unsuccessful app exit during its initial launch wait.
+The command-script path checks for shortcuts run before payload extraction.
 
 Pass `-ExpectedSourceCommit` with the full build commit when collecting
 release evidence. The check requires both installed packages to record that
