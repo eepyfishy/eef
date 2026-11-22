@@ -7,6 +7,12 @@ from 27/40 to 29/40. Manual review still finds missing grounding and clear-reque
 failures. No production serialization or default changes follow; direct-backend
 diagnostics are not public-node or independent quality acceptance.
 
+The subsequent [Gemma comparison and public-node candidate](experiments/interpreter-property-order.md#public-node-candidate-2026-11-23)
+measure goal-first schema serialization on an existing larger model. The candidate
+improves the two frozen suite scores to 17/20 and 18/20 through the normal node
+preview command. One required cancellation question is still lost. This remains
+development evidence with default-model and full release acceptance open.
+
 The subsequent [Granite 4.0 1B screen](MODEL-CANDIDATE-EVALUATION.md#granite-40-1b-candidate-2026-10-25-not-default-approved)
 also fails default candidacy: all forty proposals pass schema validation, but
 labels match only 11/20 and 6/20; all fifteen clear inputs receive unnecessary

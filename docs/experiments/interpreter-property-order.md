@@ -129,3 +129,28 @@ inputs. The retained fixtures are
 the predeclared plan, private results and `audit.json`. The experiment used the
 already installed model through the existing shared service and issued zero
 workload grants. Source revision was `4f0136d`.
+
+## Public-node candidate (2026-11-23)
+
+Source `389e32b` adds a backend request serializer for the complete ten-field
+proposal schema. Both Ollama and llama.cpp request adapters serialize those
+properties in the measured goal-first order. Message objects, unrelated schemas,
+schema values, required arrays and protocol/task definitions retain their
+existing representations. The independent Rust interpretation validator owns
+acceptance. The serializer introduces no model-specific selection or permissions.
+
+The candidate's actual node executable then ran both complete suites through
+`requests preview`, with the same existing Gemma model and bounds as above.
+All forty proposals were accepted structurally. Scores were 17/20 and 18/20,
+with zero unnecessary questions and the same one lost cancellation question.
+Both prompt and schema reference hashes matched the preceding packaged-node
+baseline. The run recorded execution, dispatch and automatic retry as false.
+
+The candidate binary SHA-256 was
+`67fd5b732e4fd2c33215f2ba24feb91eebc231bbecc726ec7becf7905950723e`.
+Local reports are `interpreter-quality-gsj12o` and `interpreter-quality-xi6nGY`
+under `.validation/`. Sixty-six focused Rust regressions passed across schema
+serialization, interpretation, task binding, response completion, adapter
+behavior, interpreter serving and sampling. Full hosted acceptance and model
+quality approval remain open. Physical-network and owned CPU-runtime evaluation
+of this source remain separate requirements.
