@@ -90,3 +90,42 @@ records and independently observes no live matching processes; it does not infer
 exit zero, rerun inference or relabel the original auditor as passed. All model
 outputs, cases, bounds and scoring remain unchanged. No physical node, installer,
 update feed, model policy or UI development is changed by this experiment.
+
+## Existing Gemma comparison (2026-11-23)
+
+The subsequent packaged alpha.7 evaluation of the existing `gemma4:latest`
+model motivated a second-backend comparison using the same two property orders
+defined above. The plan and script hashes were recorded before inference.
+Both frozen suites ran once per condition through loopback Ollama `0.40.17`.
+The model digest was
+`c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb`.
+The shared production reference supplied the prompt, capabilities and schema.
+Context was 4,096 tokens, output was bounded to 512 tokens, temperature was zero,
+and the disabled-thinking hint and twenty-second inference wait were fixed.
+
+| Condition | Suite | Label matches | Unnecessary questions | Required questions lost |
+| --- | --- | ---: | ---: | ---: |
+| Current order | original-v1 | 13/20 | 7 | 0 |
+| Current order | generalization-v1 | 12/20 | 8 | 0 |
+| Goal first | original-v1 | 17/20 | 0 | 0 |
+| Goal first | generalization-v1 | 18/20 | 0 | 1 |
+
+All eighty outputs passed the shared Rust validator. A separate audit revalidated
+and regraded every output, reconciled all eighty reconstructed request hashes,
+and checked the script, helper and reference hashes. Output keys followed the
+requested property order in all eighty responses. Schema values, required arrays
+and alternatives remained semantically identical between conditions.
+
+Manual review of the five goal-first label mismatches found four proposals choosing
+`system.ping` for node status or responsiveness, where the frozen rubric requires
+`system.info`. Those scores remain recorded as mismatches. The other proposal
+interpreted an unresolved cancellation as "Cancel the previous task" and omitted
+the required question. These results motivate production-path testing and further
+review of unresolved references. Interpreter/default approval remains open.
+
+This was a sequential, single-pass direct-provider comparison with fixed synthetic
+inputs. The retained fixtures are
+`.validation/gemma-property-order-f5fbcd6a80de460f9c7fcd0ac22a2c9d/`, including
+the predeclared plan, private results and `audit.json`. The experiment used the
+already installed model through the existing shared service and issued zero
+workload grants. Source revision was `4f0136d`.
