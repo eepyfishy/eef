@@ -33,6 +33,7 @@ pub mod engine;
 pub mod enrollment;
 pub mod execution_boundary;
 pub mod firmware;
+mod generation_payload;
 pub mod grant_time;
 pub mod grants;
 pub mod inference_budget;

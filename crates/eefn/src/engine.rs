@@ -2068,7 +2068,7 @@ impl NodeEngine {
             .timeout(Duration::from_secs(
                 params.get("timeout").and_then(Value::as_u64).unwrap_or(60),
             ))
-            .json(&payload)
+            .json(&crate::generation_payload::Payload(&payload))
             .send()
             .await?
             .error_for_status()?;
@@ -2109,7 +2109,7 @@ impl NodeEngine {
             .timeout(Duration::from_secs(
                 params.get("timeout").and_then(Value::as_u64).unwrap_or(60),
             ))
-            .json(&payload)
+            .json(&crate::generation_payload::Payload(&payload))
             .send()
             .await?
             .error_for_status()?;
