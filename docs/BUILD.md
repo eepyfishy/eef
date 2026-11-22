@@ -59,6 +59,10 @@ destination. It checks replacement access to existing application files and
 keeps those handles until extraction finishes. A file already locked against
 replacement therefore stops setup before earlier files are changed. Existing
 configuration is excluded from this replacement check.
+An OS lock on `.eef-install.lock` serializes setup for each destination through
+configuration, shortcuts and launch. A second setup for that folder asks the
+user to wait. The lock file is retained for reuse and the OS releases the lock
+when the setup process exits.
 It then stages and synchronizes each payload file before replacing
 the installed copy. Corrupt payloads fail before any installation write. A refused
 file replacement leaves that file's previous bytes in place. Existing configuration is kept, including a configuration

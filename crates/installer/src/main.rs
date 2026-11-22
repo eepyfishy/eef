@@ -19,6 +19,7 @@ mod installer_payload;
 #[cfg(windows)]
 mod wizard;
 type Progress = Option<std::sync::Arc<dyn Fn(u32, &str) + Send + Sync>>;
+const INSTALL_LOCK: &str = ".eef-install.lock";
 
 #[derive(Debug, Deserialize)]
 struct BundleManifest {
@@ -80,7 +81,7 @@ fn install(options: Options, progress: Progress) -> Result<()> {
         }
     };
     reject_download_directory(&executable, &install_dir)?;
-    extract_payload(&payload, &install_dir, &manifest.name, &progress)?;
+    let _installation_lock = extract_payload(&payload, &install_dir, &manifest.name, &progress)?;
     if manifest.name == "eef" {
         ensure_coordinator_secret(&install_dir.join(product.config))?;
     }
@@ -193,9 +194,16 @@ fn verified_unpacked_size(payload: &[u8]) -> Result<u64> {
     let mut total = 0_u64;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
-        entry
+        let relative = entry
             .enclosed_name()
             .context("unsafe path in installer payload")?;
+        anyhow::ensure!(
+            !relative.components().next().is_some_and(|part| part
+                .as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(INSTALL_LOCK)),
+            "installer payload uses the setup lock filename"
+        );
         let expected = entry.size();
         let actual = std::io::copy(&mut entry, &mut std::io::sink())
             .context("verify installer payload before changing installed files")?;
@@ -237,11 +245,25 @@ fn extract_payload(
     destination: &Path,
     product: &str,
     progress: &Progress,
-) -> Result<()> {
+) -> Result<File> {
     let required = verified_unpacked_size(payload)?;
     check_install_space(destination, required)?;
-    let _replacement_guards = replacement_guards(payload, destination, product)?;
     fs::create_dir_all(destination)?;
+    let mut lock_options = fs::OpenOptions::new();
+    lock_options
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        lock_options.share_mode(3);
+    }
+    let installation_lock = lock_options.open(destination.join(INSTALL_LOCK))?;
+    fs2::FileExt::try_lock_exclusive(&installation_lock)
+        .context("Another setup is using this folder. Wait for it to finish before retrying")?;
+    let _replacement_guards = replacement_guards(payload, destination, product)?;
     let mut archive = ZipArchive::new(Cursor::new(payload))?;
     let entries = archive.len();
     for index in 0..entries {
@@ -280,7 +302,7 @@ fn extract_payload(
                 .with_context(|| format!("install application file: {}", output.display()))?;
         }
     }
-    Ok(())
+    Ok(installation_lock)
 }
 
 fn replacement_guards(payload: &[u8], destination: &Path, product: &str) -> Result<Vec<File>> {
@@ -623,7 +645,7 @@ mod tests {
         extract_payload(&valid, dir.path(), "eefn", &None).unwrap();
         assert_eq!(fs::read(&path).unwrap(), contents);
         assert_eq!(fs::read(&old_stage).unwrap(), b"existing unrelated file");
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 3);
     }
 
     #[cfg(windows)]
@@ -653,7 +675,7 @@ mod tests {
         assert!(error.to_string().contains("Close the app"));
         assert_eq!(fs::read(&first).unwrap(), b"previous application");
         assert_eq!(fs::read(&later).unwrap(), b"previous runtime");
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 3);
         drop(lock);
 
         extract_payload(&payload, dir.path(), "eefn", &None).unwrap();
@@ -678,11 +700,44 @@ mod tests {
 
         assert!(extract_payload(&payload, dir.path(), "eef", &None).is_err());
         assert_eq!(fs::read(&path).unwrap(), b"previous application");
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
         drop(guard);
 
         extract_payload(&payload, dir.path(), "eef", &None).unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"updated application");
+    }
+
+    #[test]
+    fn setup_lock_excludes_the_same_destination_until_its_owner_exits() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = zip_payload("eefn.exe", b"first application");
+        let second = zip_payload("eefn.exe", b"second application");
+        let lock = extract_payload(&first, dir.path(), "eefn", &None).unwrap();
+        let error = extract_payload(&second, dir.path(), "eefn", &None).unwrap_err();
+        assert!(error.to_string().contains("Another setup"));
+        assert_eq!(
+            fs::read(dir.path().join("eefn.exe")).unwrap(),
+            b"first application"
+        );
+        let other = tempfile::tempdir().unwrap();
+        extract_payload(&second, other.path(), "eefn", &None).unwrap();
+        drop(lock);
+        extract_payload(&second, dir.path(), "eefn", &None).unwrap();
+        assert_eq!(
+            fs::read(dir.path().join("eefn.exe")).unwrap(),
+            b"second application"
+        );
+    }
+
+    #[test]
+    fn payload_cannot_replace_the_installer_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("fresh");
+        for name in [INSTALL_LOCK, ".eef-install.lock/child"] {
+            let payload = zip_payload(name, b"invalid payload entry");
+            assert!(extract_payload(&payload, &destination, "eefn", &None).is_err());
+            assert!(!destination.exists());
+        }
     }
 
     #[cfg(windows)]
