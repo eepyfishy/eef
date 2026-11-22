@@ -71,6 +71,9 @@ the installed copy. Corrupt payloads fail before any installation write. A refus
 file replacement leaves that file's previous bytes in place. Existing configuration is kept, including a configuration
 created while setup is copying files. Whole-install rollback is a separate gate.
 Setup also reports an unsuccessful app exit during its initial launch wait.
+The wizard keeps a failed launch on an explicit recovery page with
+**Retry opening** and **Close**. Retrying opens the installed app again without
+reinstalling files or changing settings. Setup never retries a launch on its own.
 The command-script path checks for shortcuts run before payload extraction.
 Sign-in and Start menu command files use the shared atomic writer, preserving
 the previous shortcut if its replacement fails.
@@ -166,6 +169,15 @@ isolated startup settings. It checks that Back retains options and Review
 precedes file writes. The report records each tested installer hash alongside
 the Defender scans. Use `-LayoutOnly` to stop at Review and verify that
 cancelling leaves the destination untouched.
+
+After building the installer and its `installer_launch_fixture` example, run
+`tools/test-installer-launch-ui.ps1 -BinaryDir target/debug` to check launch
+recovery with small synthetic payloads. Both roles cover closing after a failed
+launch, another explicit failed retry, and a successful retry. The check uses
+isolated Start menu/settings paths, scans its two test installers with Defender,
+records binary hashes and confirms that retries preserve installed files.
+It does not launch the actual coordinator or node, verify app health, or replace
+full-package installation and physical two-PC acceptance.
 
 The [real CPU inference test](CLIENT-ACCEPTANCE.md#running-the-checks) uses an
 unpacked runtime bundle and an explicit catalog candidate. You can reuse a

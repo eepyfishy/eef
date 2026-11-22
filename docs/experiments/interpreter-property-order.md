@@ -154,3 +154,36 @@ serialization, interpretation, task binding, response completion, adapter
 behavior, interpreter serving and sampling. Full hosted acceptance and model
 quality approval remain open. Physical-network and owned CPU-runtime evaluation
 of this source remain separate requirements.
+
+## Normal network input finding (2026-11-23)
+
+The candidate node executable above was also tested through ordinary
+`requests input` using two logical nodes on one PC. The input node had no model.
+A separate provider shared the already installed Gemma interpreter under an
+explicit owner-approved policy. Both registered over pinned private TLS.
+The coordinator used the published alpha.7 executable, whose interpreter task
+definitions remain compatible with this serializer-only candidate.
+
+For "Show the operating system and memory usage of this node," the initial
+interpretation correctly selected `system.info` without asking a question.
+Method preparation then copied its prompt's example question, "Which concrete
+input should be used?", and returned `clarification_required` without a plan.
+For "Cancel the previous one," initial interpretation asked which request was
+meant and did not advance to method preparation. The three interpreter service
+reports completed and released their slots. No workload execution was approved
+or dispatched, and no automatic retry was requested.
+
+The successful transport and service accounting do not constitute successful
+method preparation. The initial preview scores above cover an earlier stage.
+The method prompt currently supplies a filled clarification example and no
+output schema hint; copying that example is an observed failure, while its
+precise cause remains a hypothesis. Useful end-to-end model behavior remains an
+open acceptance gate.
+
+The retained run is
+`.validation/real-model-network-input-417149ba6d0345c9a2782eaf09bb1ef1/`,
+including `results.json`, private source/results and a separate `audit.json`.
+An earlier fixture omitted model selection and stopped before inference when
+the public role command refused it. That fixture remains retained separately.
+This finding covers one PC with two logical nodes and an existing large model.
+It provides no physical two-PC, lightweight default-model or release approval.

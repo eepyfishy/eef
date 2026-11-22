@@ -388,3 +388,20 @@ by hosted CI. The isolated real CPU regression also passes at that source.
 Neither CI nor that operation test approves a default/interpreter's quality,
 complete automatic onboarding, physical two-PC, MSI/signing/Defender or stable
 release readiness. No version, installed node, release asset or feed changed.
+
+## Installer safety checkpoint (2026-11-23)
+
+[Run 45049888970](https://github.com/eepyfishy/eef/actions/runs/45049888970)
+passes all four matrix jobs at
+`45908c0f48950904bbc035d2426c3367987d5c84`. The Windows headless log reconciles
+all 39 configured native scripts in order, 1,921 passed Rust tests with one
+ignored, and successful Windows app metadata verification. The development
+branch was advanced to this exact accepted source.
+
+This checkpoint includes complete payload verification before extraction,
+replacement-handle preflight, role checks, atomic shortcuts and the shared
+setup/update lock. Separately, the full wizard and fresh/alpha.6 upgrade fixtures
+passed locally with this setup executable and unchanged alpha.7 payloads. Those
+mixed-source fixtures were not published as a release. The later explicit launch
+recovery page requires its own acceptance; whole-install rollback, physical
+two-PC, Authenticode and stable-release acceptance remain open.

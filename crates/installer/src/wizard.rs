@@ -35,6 +35,7 @@ enum Page {
     Review,
     Installing,
     Finished,
+    LaunchFailed,
 }
 
 #[derive(Default)]
@@ -150,10 +151,24 @@ unsafe fn show_page(window: HWND, state: &mut State, page: Page) {
                 "Finish",
                 "You can find the app later in the eef folder in the Start menu.",
             ),
+            Page::LaunchFailed => (
+                "App could not open".into(),
+                "Retry opening",
+                "Installation is complete. Retry opening the app, or close setup and open it later from the Start menu.",
+            ),
         };
         text(window, HEADING, &heading);
         text(window, INTRO, description);
         text(window, NEXT, next);
+        text(
+            window,
+            CLOSE,
+            if page == Page::LaunchFailed {
+                "Close"
+            } else {
+                "Cancel"
+            },
+        );
         text(window, STATUS, "");
         if page == Page::Review {
             let startup = if checked(window, STARTUP) {
@@ -452,13 +467,13 @@ unsafe extern "system" fn window_proc(
                             return 0;
                         }
                         Page::Installing => return 0,
-                        Page::Finished => {
+                        Page::Finished | Page::LaunchFailed => {
                             if state.launch {
-                                state.launch = false;
                                 if let Err(error) = super::launch_installed(
                                     &state.path.join(state.product.executable),
                                     &state.path.join(state.product.config),
                                 ) {
+                                    show_page(window, state, Page::LaunchFailed);
                                     text(
                                         window,
                                         STATUS,
@@ -466,6 +481,7 @@ unsafe extern "system" fn window_proc(
                                     );
                                     return 0;
                                 }
+                                state.launch = false;
                             }
                             DestroyWindow(window);
                             return 0;
