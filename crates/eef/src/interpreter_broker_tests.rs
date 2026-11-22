@@ -129,7 +129,33 @@ async fn normal_network_answer_resolves_and_prepares_without_reentering_input_ad
     assert!(eefn::request_response::confirmed(
         &result, "input", &command
     ));
-    assert_eq!(result["success"], true, "{result}");
+    if result["success"] != true {
+        let attempts: Vec<_> = f
+            .runtime()
+            .engine
+            .store
+            .interpreter_allowance_records()
+            .unwrap()
+            .0
+            .iter()
+            .map(|record| {
+                let receipt = record.report.as_ref();
+                json!({
+                    "stage": record.stage().ok(),
+                    "phase": record.phase,
+                    "receipt_state": receipt.map(|r| r.state),
+                    "receipt_error": receipt.and_then(|r| r.error_code.as_deref()),
+                    "receipt_persisted": receipt.map(|r| r.persisted),
+                })
+            })
+            .collect();
+        panic!(
+            "Answer workflow failed: status={} error={} calls={} attempts={attempts:?}",
+            result["status"],
+            result["error_code"],
+            f.model.calls.load(Ordering::SeqCst)
+        );
+    }
     assert_eq!(result["status"], "awaiting_approval");
     assert_eq!(
         result["resolution"]["interpretation_source"],
