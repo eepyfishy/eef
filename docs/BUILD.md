@@ -59,10 +59,10 @@ destination. It checks replacement access to existing application files and
 keeps those handles until extraction finishes. A file already locked against
 replacement therefore stops setup before earlier files are changed. Existing
 configuration is excluded from this replacement check.
-An OS lock on `.eef-install.lock` serializes setup for each destination through
-configuration, shortcuts and launch. A second setup for that folder asks the
-user to wait. The lock file is retained for reuse and the OS releases the lock
-when the setup process exits.
+The existing `.update.lock` serializes setup, updates, rollback and package
+repair for each destination. Setup holds it through configuration, shortcuts
+and launch. A conflicting operation asks the user to wait. The lock file is
+retained for reuse and the OS releases the lock when the process exits.
 Setup also reads the existing `bundle.json` before extraction and requires the
 installed role to match. Use separate destination folders for the coordinator
 and node. Older manifests with a UTF-8 BOM and extra metadata remain compatible.

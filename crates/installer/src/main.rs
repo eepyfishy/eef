@@ -19,7 +19,7 @@ mod installer_payload;
 #[cfg(windows)]
 mod wizard;
 type Progress = Option<std::sync::Arc<dyn Fn(u32, &str) + Send + Sync>>;
-const INSTALL_LOCK: &str = ".eef-install.lock";
+const INSTALL_LOCK: &str = ".update.lock";
 
 #[derive(Debug, Deserialize)]
 struct BundleManifest {
@@ -264,7 +264,7 @@ fn extract_payload(
     }
     let installation_lock = lock_options.open(destination.join(INSTALL_LOCK))?;
     fs2::FileExt::try_lock_exclusive(&installation_lock)
-        .context("Another setup is using this folder. Wait for it to finish before retrying")?;
+        .context("Another setup, update or repair is using this folder. Wait for it to finish before retrying")?;
     validate_installation_role(destination, product)?;
     let _replacement_guards = replacement_guards(payload, destination, product)?;
     let mut archive = ZipArchive::new(Cursor::new(payload))?;
@@ -759,11 +759,43 @@ mod tests {
     fn payload_cannot_replace_the_installer_lock() {
         let dir = tempfile::tempdir().unwrap();
         let destination = dir.path().join("fresh");
-        for name in [INSTALL_LOCK, ".eef-install.lock/child"] {
+        for name in [INSTALL_LOCK, ".update.lock/child"] {
             let payload = zip_payload(name, b"invalid payload entry");
             assert!(extract_payload(&payload, &destination, "eefn", &None).is_err());
             assert!(!destination.exists());
         }
+    }
+
+    #[test]
+    fn setup_and_existing_update_lock_exclude_each_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let selector = dir.path().join("current.txt");
+        fs::write(&selector, b"0.4.0-alpha.6\n").unwrap();
+        let update = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(dir.path().join(".update.lock"))
+            .unwrap();
+        fs2::FileExt::try_lock_exclusive(&update).unwrap();
+        let payload = zip_payload("eefn.exe", b"new application");
+
+        let error = extract_payload(&payload, dir.path(), "eefn", &None).unwrap_err();
+        assert!(error.to_string().contains("update or repair"));
+        assert!(!dir.path().join("eefn.exe").exists());
+        assert_eq!(fs::read(&selector).unwrap(), b"0.4.0-alpha.6\n");
+        drop(update);
+
+        let setup = extract_payload(&payload, dir.path(), "eefn", &None).unwrap();
+        let update = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(dir.path().join(".update.lock"))
+            .unwrap();
+        assert!(fs2::FileExt::try_lock_exclusive(&update).is_err());
+        drop(setup);
+        fs2::FileExt::try_lock_exclusive(&update).unwrap();
     }
 
     #[test]
