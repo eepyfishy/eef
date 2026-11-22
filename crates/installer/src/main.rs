@@ -350,8 +350,17 @@ fn launch_installed(executable: &Path, config: &Path) -> Result<()> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
-    command.spawn().context("launch installed application")?;
+    let mut child = command.spawn().context("launch installed application")?;
     std::thread::sleep(std::time::Duration::from_millis(700));
+    if let Some(status) = child
+        .try_wait()
+        .context("check installed application startup")?
+    {
+        anyhow::ensure!(
+            status.success(),
+            "the installed application exited during startup ({status})"
+        );
+    }
     Ok(())
 }
 
@@ -613,6 +622,16 @@ mod tests {
         assert!(reject_cmd_text("C:\\bad&path").is_err());
         assert!(reject_cmd_text("C:\\%TEMP%\\eef").is_err());
         assert!(reject_cmd_text("C:\\!variable!\\eef").is_err());
+    }
+
+    #[test]
+    fn launch_reports_a_child_that_exits_with_a_startup_error() {
+        // The Rust test harness rejects the application's --config argument.
+        // This exercises a real child exit without launching an installed app.
+        let executable = std::env::current_exe().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let error = launch_installed(&executable, &dir.path().join("unused.json")).unwrap_err();
+        assert!(error.to_string().contains("exited during startup"));
     }
 
     #[test]

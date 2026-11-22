@@ -58,6 +58,7 @@ The EXE installer stages and synchronizes each payload file before replacing the
 installed copy. A failed extraction or refused replacement leaves that file's
 previous bytes in place. Existing configuration is kept, including a configuration
 created while setup is copying files. Whole-install rollback is a separate gate.
+Setup also reports an unsuccessful app exit during its initial launch wait.
 
 Pass `-ExpectedSourceCommit` with the full build commit when collecting
 release evidence. The check requires both installed packages to record that
@@ -81,6 +82,28 @@ after failure and refuses to overwrite an
 existing output directory. The release directory contains exactly two
 self-extracting installers: one for eef and one for eefn. A combined ignored
 staging bundle is removed by default; use `-KeepBundle` for local diagnostics.
+
+## Published alpha.7 and subsequent setup verification
+
+[v0.4.0a7](https://github.com/eepyfishy/eef/releases/tag/v0.4.0a7) was built from
+clean source `af4dcf495bd53196e3f423ccd0c9b1c341bda754`. Its two installer hashes
+match the published asset digests. Fresh installation, upgrades from the published
+alpha.6, the full wizard, and private local enrollment passed on the build PC.
+Local Defender definitions `1.463.390.0` passed both exact files. Physical-node
+upgrade acceptance remains pending.
+
+Subsequent source `c207d4948f37eb36f4f8222202d892e42c4e4d11` passed
+[all four CI jobs](https://github.com/eepyfishy/eef/actions/runs/44875180408),
+including all 39 named Windows native regression scripts and the Windows app
+metadata check. This source adds per-file atomic setup replacement and comparison
+of release assets with Defender scan hashes. A locally rebuilt setup executable
+also passed fresh installation and real alpha.6 upgrades using the unchanged
+alpha.7 payloads. These mixed-source test files are local fixtures.
+
+The earlier metadata validation run failed one interpreter answer test, then
+passed on its second attempt at the same source. The cause remains unproven.
+The answer test now reports retained receipt state, error code, persistence and
+model call count on a failed workflow to aid diagnosis. These are test diagnostics.
 
 ## Local command-first installer validation (2026-11-21)
 
