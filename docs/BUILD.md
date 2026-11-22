@@ -72,6 +72,8 @@ file replacement leaves that file's previous bytes in place. Existing configurat
 created while setup is copying files. Whole-install rollback is a separate gate.
 Setup also reports an unsuccessful app exit during its initial launch wait.
 The command-script path checks for shortcuts run before payload extraction.
+Sign-in and Start menu command files use the shared atomic writer, preserving
+the previous shortcut if its replacement fails.
 
 Pass `-ExpectedSourceCommit` with the full build commit when collecting
 release evidence. The check requires both installed packages to record that

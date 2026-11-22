@@ -404,13 +404,14 @@ fn set_startup(install_dir: &Path, product: &Product, enabled: bool) -> Result<(
         let config = install_dir.join(product.config);
         reject_cmd_text(&executable.to_string_lossy())?;
         reject_cmd_text(&config.to_string_lossy())?;
-        fs::write(
+        atomic_file::write(
             &startup,
             format!(
                 "@echo off\r\nstart \"\" /min \"{}\" --config \"{}\"\r\n",
                 executable.display(),
                 config.display()
-            ),
+            )
+            .as_bytes(),
         )?;
     } else if startup.is_file() {
         fs::remove_file(startup)?;
@@ -491,13 +492,14 @@ fn create_app_shortcut(directory: &Path, product: &Product) -> Result<()> {
     let config = directory.join(product.config);
     reject_cmd_text(&executable.to_string_lossy())?;
     reject_cmd_text(&config.to_string_lossy())?;
-    fs::write(
-        menu.join(format!("{}.cmd", product.display)),
+    atomic_file::write(
+        &menu.join(format!("{}.cmd", product.display)),
         format!(
             "@echo off\r\nstart \"\" /min \"{}\" --config \"{}\" --open-dashboard\r\n",
             executable.display(),
             config.display()
-        ),
+        )
+        .as_bytes(),
     )?;
     Ok(())
 }
