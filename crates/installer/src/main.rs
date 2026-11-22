@@ -240,6 +240,7 @@ fn extract_payload(
 ) -> Result<()> {
     let required = verified_unpacked_size(payload)?;
     check_install_space(destination, required)?;
+    let _replacement_guards = replacement_guards(payload, destination, product)?;
     fs::create_dir_all(destination)?;
     let mut archive = ZipArchive::new(Cursor::new(payload))?;
     let entries = archive.len();
@@ -280,6 +281,39 @@ fn extract_payload(
         }
     }
     Ok(())
+}
+
+fn replacement_guards(payload: &[u8], destination: &Path, product: &str) -> Result<Vec<File>> {
+    let mut archive = ZipArchive::new(Cursor::new(payload))?;
+    let mut guards = Vec::new();
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index)?;
+        let relative = entry
+            .enclosed_name()
+            .context("unsafe path in installer payload")?;
+        if entry.is_dir() || should_preserve_config(product, &relative) {
+            continue;
+        }
+        let output = destination.join(relative);
+        let mut options = fs::OpenOptions::new();
+        options.write(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            use windows_sys::Win32::Storage::FileSystem::{DELETE, FILE_WRITE_DATA};
+            options.access_mode(DELETE | FILE_WRITE_DATA);
+        }
+        match options.open(&output) {
+            Ok(file) => guards.push(file),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Cannot replace {}. Close the app and check the folder's write permissions before retrying", output.display())
+                });
+            }
+        }
+    }
+    Ok(guards)
 }
 
 fn should_preserve_config(product: &str, relative: &Path) -> bool {
@@ -590,6 +624,41 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), contents);
         assert_eq!(fs::read(&old_stage).unwrap(), b"existing unrelated file");
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_later_locked_file_prevents_replacement_of_earlier_files() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("eefn.exe");
+        let later = dir.path().join("runtime.dll");
+        fs::write(&first, b"previous application").unwrap();
+        fs::write(&later, b"previous runtime").unwrap();
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&later)
+            .unwrap();
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("eefn.exe", options).unwrap();
+        writer.write_all(b"updated application").unwrap();
+        writer.start_file("runtime.dll", options).unwrap();
+        writer.write_all(b"updated runtime").unwrap();
+        let payload = writer.finish().unwrap().into_inner();
+
+        let error = extract_payload(&payload, dir.path(), "eefn", &None).unwrap_err();
+        assert!(error.to_string().contains("Close the app"));
+        assert_eq!(fs::read(&first).unwrap(), b"previous application");
+        assert_eq!(fs::read(&later).unwrap(), b"previous runtime");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+        drop(lock);
+
+        extract_payload(&payload, dir.path(), "eefn", &None).unwrap();
+        assert_eq!(fs::read(&first).unwrap(), b"updated application");
+        assert_eq!(fs::read(&later).unwrap(), b"updated runtime");
     }
 
     #[cfg(windows)]

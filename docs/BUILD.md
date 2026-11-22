@@ -55,7 +55,11 @@ hashes. It checks that upgrade preserves configuration and both startup choices
 across the two roles and installs the same application bytes as a fresh setup.
 
 The EXE installer reads and verifies every archive entry before writing to the
-destination. It then stages and synchronizes each payload file before replacing
+destination. It checks replacement access to existing application files and
+keeps those handles until extraction finishes. A file already locked against
+replacement therefore stops setup before earlier files are changed. Existing
+configuration is excluded from this replacement check.
+It then stages and synchronizes each payload file before replacing
 the installed copy. Corrupt payloads fail before any installation write. A refused
 file replacement leaves that file's previous bytes in place. Existing configuration is kept, including a configuration
 created while setup is copying files. Whole-install rollback is a separate gate.
