@@ -33,6 +33,37 @@ integrated. Its initial noncomparable/interrupted harness result is separately
 retained; the corrected forty-case run and metadata/lifetime regressions do not
 approve a default or replace full public-node quality acceptance.
 
+## Gemma packaged-node evaluation (2026-11-23)
+
+The existing loopback Ollama model `gemma4:latest` completed the frozen
+`original-v1` suite through the packaged alpha.7 node. All 20 proposals passed
+structural validation and 13/20 matched the unchanged rubric. Every proposal
+requested clarification. The seven mismatches were clear system-information,
+explanation and greeting requests, including Thai and Spanish inputs. One
+explanation used the literal string `None` as its clarification question.
+Default-model quality remains open.
+
+The run used Ollama `0.40.17`, a 4,096-token context, a 512-token output limit,
+and the disabled-thinking request hint. The provider-reported model digest was
+`c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb`.
+The selected model was already installed and reported 8.0B parameters. This
+evaluation covers an owner-selected larger model. The lightweight CPU default
+and physical two-PC workflow still require their own acceptance.
+
+The node came from clean alpha.7 payload source `af4dcf4`, with executable SHA-256
+`b7a7d966008bdeebca5fe2e83bdc8335d99368de9aeb8dc521300794083b2884`.
+Its interpreter source matched the current tree. A freshly built reference
+helper captured the shared prompt and schema. The completed report is retained
+locally at `.validation/interpreter-quality-UmYBj2/results.json`. Requests stayed
+in local preview with execution, dispatch and automatic retry disabled. The
+harness completed with a paused network connection and unchanged node settings.
+
+An earlier attempt stopped before any case because the test reference helper
+lacked adjacent runtime DLLs. Its report remains at
+`.validation/interpreter-quality-PnMd4B/results.json`. Fixing that test directory
+allowed the complete run above. Model weights were accessed through the existing
+Ollama service, with zero model downloads or copies.
+
 ## Qwen3-VL output-limit observation (2026-11-21)
 
 An isolated node used the existing loopback Ollama model `qwen3-vl:latest`
