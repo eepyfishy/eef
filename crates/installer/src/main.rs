@@ -80,9 +80,7 @@ fn install(options: Options, progress: Progress) -> Result<()> {
                 .join(product.directory)
         }
     };
-    reject_download_directory(&executable, &install_dir)?;
-    reject_cmd_text(&install_dir.join(product.executable).to_string_lossy())?;
-    reject_cmd_text(&install_dir.join(product.config).to_string_lossy())?;
+    validate_install_destination(&executable, &install_dir, &manifest.name)?;
     let _installation_lock = extract_payload(&payload, &install_dir, &manifest.name, &progress)?;
     if manifest.name == "eef" {
         ensure_coordinator_secret(&install_dir.join(product.config))?;
@@ -329,6 +327,39 @@ fn validate_installation_role(destination: &Path, expected: &str) -> Result<()> 
     Ok(())
 }
 
+/// Read-only checks shared by the wizard and unattended setup. Extraction still
+/// rechecks the installed role while holding the setup/update lock.
+fn validate_install_destination(executable: &Path, destination: &Path, name: &str) -> Result<()> {
+    let destination = normalize(destination)?;
+    anyhow::ensure!(
+        destination.file_name().is_some(),
+        "Choose a dedicated installation folder, rather than the root of a drive"
+    );
+    reject_download_directory(executable, &destination)?;
+    let product = product(name)?;
+    reject_cmd_text(&destination.join(product.executable).to_string_lossy())?;
+    reject_cmd_text(&destination.join(product.config).to_string_lossy())?;
+    let mut ancestor = destination.as_path();
+    loop {
+        match fs::metadata(ancestor) {
+            Ok(metadata) => {
+                anyhow::ensure!(
+                    metadata.is_dir(),
+                    "This location is a file. Choose an installation folder"
+                );
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                ancestor = ancestor
+                    .parent()
+                    .context("This folder has no existing parent")?;
+            }
+            Err(error) => return Err(error).context("Cannot inspect the installation folder"),
+        }
+    }
+    validate_installation_role(&destination, name)
+}
+
 fn replacement_guards(payload: &[u8], destination: &Path, product: &str) -> Result<Vec<File>> {
     let mut archive = ZipArchive::new(Cursor::new(payload))?;
     let mut guards = Vec::new();
@@ -459,13 +490,41 @@ fn launch_installed(executable: &Path, config: &Path) -> Result<()> {
 
 fn reject_download_directory(executable: &Path, destination: &Path) -> Result<()> {
     let source = executable.parent().context("installer has no directory")?;
-    let source = normalize(source)?;
-    let destination = normalize(destination)?;
+    let source = resolve_install_location(source)?;
+    let destination = resolve_install_location(destination)?;
     if source == destination || source.starts_with(&destination) || destination.starts_with(&source)
     {
         bail!("choose an installation directory separate from the downloaded installer")
     }
     Ok(())
+}
+
+fn resolve_install_location(path: &Path) -> Result<PathBuf> {
+    let normalized = normalize(path)?;
+    let mut ancestor = normalized.as_path();
+    let mut missing = Vec::new();
+    loop {
+        match ancestor.canonicalize() {
+            Ok(mut resolved) => {
+                for component in missing.iter().rev() {
+                    resolved.push(component);
+                }
+                return Ok(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(
+                    ancestor
+                        .file_name()
+                        .context("This folder has no existing parent")?
+                        .to_os_string(),
+                );
+                ancestor = ancestor
+                    .parent()
+                    .context("This folder has no existing parent")?;
+            }
+            Err(error) => return Err(error).context("Cannot inspect the installation folder"),
+        }
+    }
 }
 
 fn check_install_space(destination: &Path, payload_bytes: u64) -> Result<()> {
@@ -891,6 +950,92 @@ mod tests {
         assert!(reject_cmd_text("C:\\bad&path").is_err());
         assert!(reject_cmd_text("C:\\%TEMP%\\eef").is_err());
         assert!(reject_cmd_text("C:\\!variable!\\eef").is_err());
+    }
+
+    #[test]
+    fn folder_preflight_is_read_only_for_new_and_existing_installations() {
+        let dir = tempfile::tempdir().unwrap();
+        let downloads = dir.path().join("downloads");
+        fs::create_dir(&downloads).unwrap();
+        let installer = downloads.join("setup.exe");
+        for name in ["eef", "eefn"] {
+            let destination = dir.path().join(name);
+            validate_install_destination(&installer, &destination, name).unwrap();
+            assert!(!destination.exists());
+            fs::create_dir(&destination).unwrap();
+            let manifest =
+                serde_json::to_vec(&serde_json::json!({"name":name,"version":"old"})).unwrap();
+            fs::write(destination.join("bundle.json"), &manifest).unwrap();
+            validate_install_destination(&installer, &destination, name).unwrap();
+            assert_eq!(fs::read(destination.join("bundle.json")).unwrap(), manifest);
+            assert_eq!(fs::read_dir(&destination).unwrap().count(), 1);
+        }
+    }
+
+    #[test]
+    fn folder_preflight_rejects_invalid_locations_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let downloads = dir.path().join("downloads");
+        fs::create_dir(&downloads).unwrap();
+        let installer = downloads.join("setup.exe");
+        let file = dir.path().join("owner-file");
+        fs::write(&file, b"owner content").unwrap();
+        for destination in [
+            downloads.clone(),
+            downloads.join("eef"),
+            dir.path().to_path_buf(),
+            dir.path().join("bad&folder"),
+            file.clone(),
+            file.join("eef"),
+        ] {
+            assert!(
+                validate_install_destination(&installer, &destination, "eef").is_err(),
+                "{}",
+                destination.display()
+            );
+        }
+        assert_eq!(fs::read(file).unwrap(), b"owner content");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+        assert_eq!(fs::read_dir(downloads).unwrap().count(), 0);
+        let root = dir.path().ancestors().last().unwrap();
+        assert!(
+            validate_install_destination(&installer, root, "eef")
+                .unwrap_err()
+                .to_string()
+                .contains("dedicated installation folder")
+        );
+    }
+
+    #[test]
+    fn folder_preflight_rejects_the_other_role_before_a_setup_lock_is_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let downloads = dir.path().join("downloads");
+        fs::create_dir(&downloads).unwrap();
+        let installer = downloads.join("setup.exe");
+        for (installed, incoming) in [("eef", "eefn"), ("eefn", "eef")] {
+            let destination = dir.path().join(installed);
+            fs::create_dir(&destination).unwrap();
+            let manifest =
+                serde_json::to_vec(&serde_json::json!({"name":installed,"version":"old"})).unwrap();
+            fs::write(destination.join("bundle.json"), &manifest).unwrap();
+            let error =
+                validate_install_destination(&installer, &destination, incoming).unwrap_err();
+            assert!(error.to_string().contains("Choose a separate folder"));
+            assert_eq!(fs::read(destination.join("bundle.json")).unwrap(), manifest);
+            assert_eq!(fs::read_dir(destination).unwrap().count(), 1);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn download_folder_check_handles_canonical_windows_prefixes_and_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let downloads = dir.path().join("Downloads");
+        fs::create_dir(&downloads).unwrap();
+        let installer = downloads.canonicalize().unwrap().join("setup.exe");
+        assert!(reject_download_directory(&installer, &downloads).is_err());
+        assert!(reject_download_directory(&installer, &dir.path().join("downloads/eef")).is_err());
+        assert!(reject_download_directory(&installer, &dir.path().join("eef")).is_ok());
     }
 
     #[test]

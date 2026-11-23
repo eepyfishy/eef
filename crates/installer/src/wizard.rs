@@ -49,6 +49,8 @@ struct State {
     page: Page,
     launch: bool,
     path: PathBuf,
+    installer: PathBuf,
+    product_name: String,
     product: &'static super::Product,
 }
 
@@ -209,6 +211,8 @@ pub fn run(options: Options) -> Result<()> {
         page: Page::Welcome,
         launch: true,
         path: path.clone(),
+        installer: executable,
+        product_name: manifest.name,
         product,
     });
     unsafe {
@@ -451,14 +455,23 @@ unsafe extern "system" fn window_proc(
                                 SetFocus(edit);
                                 return 0;
                             }
-                            match super::absolute(PathBuf::from(path)) {
+                            let validated = super::absolute(PathBuf::from(path)).and_then(|path| {
+                                super::validate_install_destination(
+                                    &state.installer,
+                                    &path,
+                                    &state.product_name,
+                                )?;
+                                Ok(path)
+                            });
+                            match validated {
                                 Ok(path) => state.path = path,
                                 Err(error) => {
                                     text(
                                         window,
                                         STATUS,
-                                        &format!("Could not use this folder: {error}"),
+                                        &format!("Could not use this folder: {error:#}"),
                                     );
+                                    SetFocus(edit);
                                     return 0;
                                 }
                             }

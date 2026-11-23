@@ -22,6 +22,13 @@ For alpha.6, see [the older dashboard setup](../FIRST_RUN.md).
 5. Check the node's connection, then configure its permissions and models using
    [Using nodes](USING_NODES.md).
 
+Newer development builds explain invalid folder choices on **Installation
+options**, before **Review setup**. Correct the folder and select **Next**
+again; no installation files are written until **Install**. If the installed
+app fails to open, those builds offer **Retry opening** or **Close**. Retrying
+opens the installed app without reinstalling it. These additions are not in
+the published alpha.7 installers.
+
 The installers include Python for supported optional adapters. You do not need
 to install Python separately for the bundled adapters. The node also includes
 the llama.cpp runtime; model files are a separate owner choice and download.

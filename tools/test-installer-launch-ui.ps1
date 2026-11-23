@@ -10,6 +10,7 @@ New-Item -ItemType Directory -Path $scratch | Out-Null
 $savedAppData = $env:APPDATA
 $child = $null
 $results = @()
+$preflightResults = @()
 Add-Type -AssemblyName System.IO.Compression
 Add-Type @'
 using System;
@@ -20,7 +21,9 @@ public static class EefWizardLaunchTest {
  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback,IntPtr data);
  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window,out uint process);
  [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr window,int id);
- [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window,StringBuilder text,int length);
+ // Cross-process controls require WM_GETTEXT/WM_SETTEXT, not window-caption APIs.
+ [DllImport("user32.dll",EntryPoint="SendMessageW",CharSet=CharSet.Unicode)] static extern IntPtr ReadText(IntPtr window,uint msg,IntPtr length,StringBuilder text);
+ [DllImport("user32.dll",EntryPoint="SendMessageW",CharSet=CharSet.Unicode)] static extern IntPtr WriteText(IntPtr window,uint msg,IntPtr unused,string text);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowLong(IntPtr window,int index);
  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window,uint msg,IntPtr w,IntPtr l);
  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window,int mode);
@@ -30,7 +33,8 @@ public static class EefWizardLaunchTest {
    if(owner==process && GetDlgItem(window,101)!=IntPtr.Zero){found=window;return false;}return true;},IntPtr.Zero);
   return found;
  }
- public static string Text(IntPtr window,int id) {var text=new StringBuilder(4096);GetWindowText(GetDlgItem(window,id),text,text.Capacity);return text.ToString();}
+ public static string Text(IntPtr window,int id) {var text=new StringBuilder(4096);ReadText(GetDlgItem(window,id),0xD,(IntPtr)text.Capacity,text);return text.ToString();}
+ public static void SetText(IntPtr window,int id,string text) {if(WriteText(GetDlgItem(window,id),0xC,IntPtr.Zero,text)==IntPtr.Zero)throw new InvalidOperationException("Could not set wizard control text");}
  public static bool Shown(IntPtr window,int id) {return (GetWindowLong(GetDlgItem(window,id),-16) & 0x10000000) != 0;}
 }
 '@
@@ -72,8 +76,10 @@ function New-FixtureInstaller([string]$Name,[string]$Output) {
 try {
     $stubHash = (Get-FileHash -LiteralPath $stub -Algorithm SHA256).Hash
     $fixtureHash = (Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash
+    $downloads = Join-Path $scratch 'downloads'
+    New-Item -ItemType Directory -Path $downloads | Out-Null
     foreach ($name in @('eef','eefn')) {
-        $installer = Join-Path $scratch "$name-installer.exe"
+        $installer = Join-Path $downloads "$name-installer.exe"
         New-FixtureInstaller $name $installer
         & (Join-Path $PSScriptRoot 'scan-windows.ps1') -Path $installer -ReportPath (Join-Path $scratch "$name-scan.json")
         foreach ($action in @('close','retry')) {
@@ -86,10 +92,44 @@ try {
                 $window = [EefWizardLaunchTest]::Find($child.Id)
                 Start-Sleep -Milliseconds 100
             }
-            if ($window -eq [IntPtr]::Zero) { throw 'Installer window did not appear' }
+            if ($window -eq [IntPtr]::Zero) { throw "Installer window did not appear (exited=$($child.HasExited), exit_code=$($child.ExitCode))" }
             [void][EefWizardLaunchTest]::ShowWindow($window,0)
             Click-Wizard $window 105
             Wait-WizardText $window 201 'Installation options'
+            if ($action -ceq 'close') {
+                $blocked = Join-Path $scratch "$name-owner-file"
+                [IO.File]::WriteAllText($blocked,'owner content')
+                $otherRole = if ($name -ceq 'eef') { 'eefn' } else { 'eef' }
+                $wrongRole = Join-Path $scratch "$name-wrong-role"
+                New-Item -ItemType Directory -Path $wrongRole | Out-Null
+                $manifest = @{name=$otherRole;version='older-fixture'} | ConvertTo-Json -Compress
+                [IO.File]::WriteAllText((Join-Path $wrongRole 'bundle.json'),$manifest)
+                $invalid = @(
+                    @{path='';message='Choose an installation folder first.'},
+                    @{path=$downloads;message='*separate from the downloaded installer*'},
+                    @{path=$scratch;message='*separate from the downloaded installer*'},
+                    @{path=(Join-Path $scratch "$name-bad&folder");message='*unsupported command characters*'},
+                    @{path=$blocked;message='*location is a file*'},
+                    @{path=$wrongRole;message='*Choose a separate folder*'},
+                    @{path=[IO.Path]::GetPathRoot($scratch);message='*dedicated installation folder*'}
+                )
+                foreach ($case in $invalid) {
+                    [EefWizardLaunchTest]::SetText($window,101,$case.path)
+                    Click-Wizard $window 105
+                    if ([EefWizardLaunchTest]::Text($window,201) -cne 'Installation options' -or
+                        [EefWizardLaunchTest]::Text($window,107) -notlike $case.message -or
+                        -not [EefWizardLaunchTest]::Shown($window,101)) {
+                        throw "Invalid folder was not explained on Options: '$($case.path)'; heading='$([EefWizardLaunchTest]::Text($window,201))'; status='$([EefWizardLaunchTest]::Text($window,107))'; field_shown=$([EefWizardLaunchTest]::Shown($window,101))"
+                    }
+                    if ((Test-Path -LiteralPath $destination) -or (Test-Path -LiteralPath $env:APPDATA)) { throw 'Folder preflight wrote installation or menu files' }
+                }
+                if ([IO.File]::ReadAllText($blocked) -cne 'owner content' -or
+                    [IO.File]::ReadAllText((Join-Path $wrongRole 'bundle.json')) -cne $manifest -or
+                    @(Get-ChildItem -LiteralPath $wrongRole -Force).Count -ne 1 -or
+                    (Test-Path -LiteralPath (Join-Path $scratch "$name-bad&folder"))) { throw 'Folder preflight changed owner files' }
+                [EefWizardLaunchTest]::SetText($window,101,$destination)
+                $preflightResults += @{role=$name;rejected_locations=$invalid.Count;before_review=$true;no_installation_writes=$true;owner_files_preserved=$true}
+            }
             Click-Wizard $window 105
             Wait-WizardText $window 201 'Review setup'
             if ([EefWizardLaunchTest]::Text($window,109) -notlike '*Open after setup  Yes*') { throw 'Launch choice was lost' }
@@ -130,8 +170,12 @@ try {
     if ((Get-FileHash -LiteralPath $stub -Algorithm SHA256).Hash -cne $stubHash -or
         (Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash -cne $fixtureHash) { throw 'Source binary changed during validation' }
     @{passed=$true;synthetic_payloads=$true;installer_stub_sha256=$stubHash.ToLowerInvariant();launcher_fixture_sha256=$fixtureHash.ToLowerInvariant();
-        automatic_retry=$false;cases=$results} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $scratch 'results.json') -Encoding UTF8
+        automatic_retry=$false;folder_preflight=$preflightResults;cases=$results} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $scratch 'results.json') -Encoding UTF8
     Write-Host "Installer launch recovery passed. Evidence: $scratch"
+} catch {
+    @{passed=$false;error=$_.Exception.Message;installer_stub_sha256=$stubHash;cases=$results;folder_preflight=$preflightResults} |
+        ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $scratch 'failed-observation.json') -Encoding UTF8
+    throw
 } finally {
     if ($child -and -not $child.HasExited) { $child.Kill(); [void]$child.WaitForExit(10000) }
     $env:APPDATA = $savedAppData

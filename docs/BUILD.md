@@ -176,8 +176,27 @@ recovery with small synthetic payloads. Both roles cover closing after a failed
 launch, another explicit failed retry, and a successful retry. The check uses
 isolated Start menu/settings paths, scans its two test installers with Defender,
 records binary hashes and confirms that retries preserve installed files.
+It also checks seven invalid folder choices per role on the Options page,
+before Review or installation writes. The test driver exchanges
+`WM_GETTEXT`/`WM_SETTEXT` with the other process's controls, as required by the
+[Windows control-text API](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowtextw).
 It does not launch the actual coordinator or node, verify app health, or replace
 full-package installation and physical two-PC acceptance.
+
+Development installers share read-only folder checks between the wizard and
+quiet command-line setup. Empty choices stay on Options; drive roots, files,
+unsupported shortcut-path characters, the other role's package, and locations
+overlapping the downloaded installer are rejected before Review. Existing
+ancestors are resolved before checking overlap, including Windows canonical
+prefixes and case variants. No installation folder or lock is created by these
+checks. Installation still checks disk space and rechecks the role under the
+setup/update lock before extraction. This does not add whole-install rollback.
+
+Local validation of this increment passed 39 installer Rust tests, 14 native
+invalid-folder cases, four launch-recovery cases, and both roles' Back/review/
+cancel checks. The native tests used small synthetic payloads, isolated settings
+and Start menu paths, and Defender definitions `1.463.429.0`. They are development
+evidence, not certification of a newly published package.
 
 The [real CPU inference test](CLIENT-ACCEPTANCE.md#running-the-checks) uses an
 unpacked runtime bundle and an explicit catalog candidate. You can reuse a

@@ -18,7 +18,8 @@ public static class EEFWizardTest {
  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback,IntPtr data);
  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window,out uint process);
  [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr window,int id);
- [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window,StringBuilder text,int length);
+ // Read cross-process control text through WM_GETTEXT, rather than caption APIs.
+ [DllImport("user32.dll",EntryPoint="SendMessageW",CharSet=CharSet.Unicode)] static extern IntPtr ReadText(IntPtr window,uint msg,IntPtr length,StringBuilder text);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowLong(IntPtr window,int index);
  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window,uint msg,IntPtr w,IntPtr l);
  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window,int mode);
@@ -31,7 +32,7 @@ public static class EEFWizardTest {
    if(owner==process && GetDlgItem(window,101)!=IntPtr.Zero){found=window;return false;}return true;},IntPtr.Zero);
   return found;
  }
- public static string Text(IntPtr window,int id) {var text=new StringBuilder(4096);GetWindowText(GetDlgItem(window,id),text,text.Capacity);return text.ToString();}
+ public static string Text(IntPtr window,int id) {var text=new StringBuilder(4096);ReadText(GetDlgItem(window,id),0xD,(IntPtr)text.Capacity,text);return text.ToString();}
  public static bool Shown(IntPtr window,int id) {return (GetWindowLong(GetDlgItem(window,id),-16) & 0x10000000) != 0;}
 }
 '@
