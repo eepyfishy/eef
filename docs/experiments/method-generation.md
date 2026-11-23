@@ -98,11 +98,15 @@ one PC. It covers model-free input, separate provider inference, private TLS,
 prepared review, explicit owner approval, system-information execution, retained
 result retrieval and receipt reuse without extra inference. This is framework
 behavior with simulated semantics.
+After task versioning, the fresh `network-input-commands-lxBsqs` fixture passes
+the same complete public-command path using the versioned source.
 
 The real-model fixture `real-model-method-guidance-20261123-v1` still returns
 `clarification_required` for the clear system-information request. Its initial
 interpretation is correct, but method preparation now asks for a node name or
-identifier. The ambiguous cancellation also remains in clarification. The fixture
+identifier. This run used the guidance implementation before task versioning;
+its prompt/schema content matches the new definition, but it did not test the
+version-two wire rollout with a real model. The ambiguous cancellation also remains in clarification. The fixture
 fails its `awaiting_approval` assertion before requesting owner approval or tool
 execution. This is an unresolved model usability failure, despite the improved
 direct-screen score. The node-name question is not the earlier copied example.
@@ -135,6 +139,11 @@ rechecked against the previously recorded SHA-256 and valid OpenJS signature.
 It passed the camera and distributed vision sections, then timed out waiting for
 the cold-model placement observation. The required `model_startup_fixture.exe`
 had not been built in this binary directory. The fixture now checks its explicit
-Python and helper paths before starting services. The complete helper build and
-fresh native run remain required; no timeout, assertion or production RAM check
-is relaxed. No global runner, installed model or app was changed by these runs.
+Python and helper paths before starting services. With the complete helpers,
+the final `request-input-he6IKr` run passes the entire native input fixture on
+the cached portable runner. It covers both camera/vision layouts, source and
+answer lineage, partial/uncertain outcomes, restart, retained results, actual
+synthetic model process ownership and cold-memory observations. Devices and
+model responses are simulated. The prior failures remain retained; no timeout,
+assertion or production RAM check is relaxed. No global runner, installed model
+or app was changed by these runs.
