@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "snapshot": {
+    "schema_version": 1,
+    "job_id": "00000000000000000000000000000001",
+    "revision": 3,
+    "operation_id": "00000000-0000-4000-8000-000000000002",
+    "request_context": {
+      "request_id": "00000000-0000-4000-8000-000000000003",
+      "origin_node": "origin",
+      "origin_area": []
+    },
+    "allowed_capabilities": [
+      "system.info"
+    ],
+    "source": {
+      "stage": "method",
+      "draft": {
+        "schema_version": 1,
+        "original_text": "Show the operating system and memory usage of this node.",
+        "proposals": [
+          {
+            "operation_id": "0706882f-13cd-48fd-b958-305bea77fa30",
+            "at_ms": 1,
+            "allowed_capabilities": [
+              "system.info"
+            ],
+            "proposal": {
+              "schema_version": 1,
+              "intent": "information",
+              "goal": "Show the operating system and memory usage of this node.",
+              "context_hints": [],
+              "constraints": [],
+              "suggested_capabilities": [
+                "system.info"
+              ],
+              "complexity": "simple",
+              "workload": "one_shot",
+              "needs_clarification": false,
+              "clarification": null
+            }
+          }
+        ],
+        "answers": []
+      }
+    }
+  },
+  "snapshot_sha256": "c12177f1c03e694d583575a643e1c2be6eac1c2cc9d07aacf6b82dcfb5a4b3a5",
+  "inference_spec_sha256": "f09aedc0c1c9c2ed4a72e6598d7fd1fa264397e9f4f2418281ca2781ee7833cf",
+  "max_output_tokens": 512
+}

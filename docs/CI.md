@@ -405,3 +405,18 @@ passed locally with this setup executable and unchanged alpha.7 payloads. Those
 mixed-source fixtures were not published as a release. The later explicit launch
 recovery page requires its own acceptance; whole-install rollback, physical
 two-PC, Authenticode and stable-release acceptance remain open.
+
+## Wizard launch recovery checkpoint (2026-11-23)
+
+[Run 45054340460](https://github.com/eepyfishy/eef/actions/runs/45054340460)
+passes all four jobs at `63f6788f7983c6a6d94da3d5acfd979783245b5a`.
+The Windows headless log reconciles all 39 configured native scripts in order,
+1,923 passed Rust tests with one ignored, and app metadata verification.
+Development advanced to this accepted source. The new native wizard recovery
+fixture passed separately on the build PC with four synthetic launch-failure
+cases and exact binary hashes; CI does not execute that UI fixture.
+
+The preceding serializer candidate at `19d5902` also passes all four jobs in
+[run 45052775755](https://github.com/eepyfishy/eef/actions/runs/45052775755)
+with the same Windows headless counts. Model quality approval, whole-install
+rollback, physical two-PC, signing and stable-release acceptance remain open.

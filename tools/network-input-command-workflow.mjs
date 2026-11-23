@@ -97,7 +97,10 @@ export async function networkInputCommandWorkflow() {
         if (Buffer.byteLength(bytes) > 65536) { response.writeHead(413); return response.end('{}'); }
       }
       const body = JSON.parse(bytes); calls.push(body);
-      const result = body.format && typeof body.format === 'object'
+      assert(body.format && typeof body.format === 'object');
+      const preparing = body.messages[0].content.startsWith('Propose one method');
+      assert.equal(Object.hasOwn(body.format.anyOf[0].properties, preparing ? 'method' : 'intent'), true);
+      const result = !preparing
         ? {schema_version: 1, intent: 'information', goal: 'Inspect node status', context_hints: [],
           constraints: [], suggested_capabilities: ['system.info'], complexity: 'simple',
           workload: 'one_shot', needs_clarification: false, clarification: null}

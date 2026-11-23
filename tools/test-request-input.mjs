@@ -12,13 +12,17 @@ import {verifyOwnedVisionCommands} from './vision-owned-model-command-checks.mjs
 // Explicit owner TLS pairing. Input stays review-only; a separate camera fixture
 // explicitly approves bounded work. No UI controller or raw workload RPC.
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
+import {mkdtemp,readFile,writeFile,access} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
 import {randomUUID,randomBytes} from 'node:crypto';
 const root=resolve(import.meta.dirname,'..'),scratch=await mkdtemp(join(root,'.validation/request-input-'));
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
+assert(process.env.EEF_TEST_PYTHON&&resolve(process.env.EEF_TEST_PYTHON)===process.env.EEF_TEST_PYTHON,
+ 'Set EEF_TEST_PYTHON to the pinned Python executable before running this fixture');
+await access(process.env.EEF_TEST_PYTHON);
+await access(join(bin,'examples/model_startup_fixture.exe'));
 const configPath=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml'),marker=configPath+'.api.json';
 const children=[],calls=[],proxyCalls=[],gates=new Set();let node='',mode='valid',proxyMode='drop',inferenceObserver=null;
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),EEF_MODEL_STARTUP_FIXTURE:'1',
@@ -69,7 +73,17 @@ const fake=createServer(async(req,res)=>{
   assert.deepEqual(body.format.anyOf[1].properties.needs_clarification.enum,[true]);
   assert.equal(body.format.anyOf[1].properties.clarification.type,'string');
   if(mode==='reject-schema'){res.writeHead(400);return res.end(JSON.stringify({error:'fixture refuses structured output'}));}
- }else assert.equal(body.format,undefined,'method proposal remains independently validated, not given the interpretation schema');
+ }else {
+  assert.deepEqual(Object.keys(body.format),['anyOf']);assert.equal(body.format.anyOf.length,2);
+  for(const branch of body.format.anyOf){
+   assert.equal(branch.additionalProperties,false);assert.deepEqual(branch.required,['schema_version','method','clarification']);
+   assert.deepEqual(Object.keys(branch.properties).sort(),['clarification','method','schema_version']);
+  }
+  assert.equal(body.format.anyOf[0].properties.method.properties.template.enum.includes('system_info'),true);
+  assert.equal(body.format.anyOf[0].properties.clarification.type,'null');
+  assert.equal(body.format.anyOf[1].properties.method.type,'null');
+  assert.equal(body.format.anyOf[1].properties.clarification.type,'string');
+ }
  if(preparing&&mode==='gate-method'){res.write(' ');gates.add(res);res.on('close',()=>gates.delete(res));return;}
  if(!preparing&&mode==='gate-resolution'){res.write(' ');gates.add(res);res.on('close',()=>gates.delete(res));return;}
  const value=preparing?method():proposal();
@@ -497,7 +511,7 @@ try {
   assert.equal(job.review_only,true,'Camera grants cannot authorize existing input jobs');assert.equal(job.completed_tasks,0);
  }
  evidence={...microphone.evidence,...cameraAuthoring.evidence,...cameraSources,...cameraSetup,...remoteCamera,...cameraLifecycle,...visionLifecycle,...remoteVisionLifecycle,...ownedVision,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
-  clarification_consistent_generation_schema:true,method_generation_unchanged:true,explicit_timing_propagates_to_all_model_stages:true,
+  clarification_consistent_generation_schema:true,method_generation_schema_guidance:true,explicit_timing_propagates_to_all_model_stages:true,
   changing_wait_on_retained_receipts_never_replays_inference:true,short_timing_preserves_partial_answer_and_source:true,
   normal_input_saved_before_any_inference:true,missing_model_retains_raw_input:true,failed_initial_inference_retains_raw_input:true,
   equal_receipts_on_distinct_authenticated_origins_are_isolated:true,

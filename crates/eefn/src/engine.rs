@@ -1783,11 +1783,13 @@ impl NodeEngine {
         }
         let messages = crate::request_preparation::messages(draft, capabilities)
             .map_err(|_| "invalid_preparation_context")?;
+        let schema = crate::request_preparation::output_schema(draft, capabilities)
+            .map_err(|_| "invalid_preparation_context")?;
         let response = self
             .selected_interpreter_response(
                 messages,
                 crate::request_preparation::MAX_OUTPUT_TOKENS,
-                None,
+                Some(schema),
                 budget,
             )
             .await?;

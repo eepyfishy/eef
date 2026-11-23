@@ -89,7 +89,24 @@ fn all_three_stages_reconstruct_exact_existing_inputs_and_round_trip() {
         assert_eq!(spec.messages, expected);
         if matches!(&source.source, Source::Method { .. }) {
             assert_eq!(ceiling, 1024);
-            assert!(spec.output_schema.is_none());
+            let Source::Method { draft } = &source.source else {
+                unreachable!()
+            };
+            assert_eq!(
+                spec.output_schema,
+                Some(
+                    crate::request_preparation::output_schema(draft, &source.allowed_capabilities)
+                        .unwrap()
+                )
+            );
+            let mut legacy_spec = spec.clone();
+            legacy_spec.output_schema = None;
+            let mut legacy_task = task.clone();
+            legacy_task.inference_spec_sha256 = spec_digest(&legacy_spec).unwrap();
+            assert!(
+                legacy_task.validate().is_err(),
+                "Never substitute schema-guided inference for a differently pinned task"
+            );
         } else {
             assert_eq!(ceiling, 512);
             assert_eq!(
@@ -102,6 +119,49 @@ fn all_three_stages_reconstruct_exact_existing_inputs_and_round_trip() {
         assert_eq!(restored.snapshot_sha256, task.snapshot_sha256);
         assert_eq!(restored.inference_spec_sha256, task.inference_spec_sha256);
     }
+}
+
+#[test]
+fn method_task_versions_reconstruct_distinct_definitions_without_relabeling_or_fallback() {
+    // Frozen from the published prompt definition before the guidance change. Its
+    // frozen digest catches accidental edits to legacy prompt bytes or schema.
+    let frozen: Task =
+        serde_json::from_str(include_str!("../tests/fixtures/interpreter-method-v1.json")).unwrap();
+    assert_eq!(frozen.schema_version, 1);
+    let source = frozen.snapshot.clone();
+    let current = Task::new(source.clone(), 512).unwrap();
+    assert_eq!(current.schema_version, 2);
+    let current_spec = current.validate().unwrap();
+    assert!(current_spec.output_schema.is_some());
+    let legacy_spec = source.spec_for_version(512, 1).unwrap();
+    assert!(legacy_spec.output_schema.is_none());
+    assert!(
+        legacy_spec.messages[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Which concrete input should be used?")
+    );
+    let mut legacy = current.clone();
+    legacy.schema_version = 1;
+    legacy.inference_spec_sha256 = spec_digest(&legacy_spec).unwrap();
+    assert_eq!(json!(legacy), json!(frozen));
+    assert_eq!(legacy.validate().unwrap(), legacy_spec);
+    let retained: Task = serde_json::from_value(json!(legacy)).unwrap();
+    assert_eq!(retained.validate().unwrap(), legacy_spec);
+    assert_eq!(retained.snapshot_sha256, current.snapshot_sha256);
+    for (mut task, version) in [(current.clone(), 1), (legacy.clone(), 2), (current, 3)] {
+        task.schema_version = version;
+        assert!(
+            task.validate().is_err(),
+            "A version change must never substitute another definition"
+        );
+    }
+    let output = json!({"schema_version":1,"method":{"schema_version":1,"template":"system_info","params":{},"constraints":{}},"clarification":null});
+    assert!(
+        retained
+            .candidate(&serde_json::to_vec(&output).unwrap(), "ollama", "fixture")
+            .is_ok()
+    );
 }
 
 #[test]

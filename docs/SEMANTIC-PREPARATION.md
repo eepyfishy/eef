@@ -1,4 +1,4 @@
-# Source-bound semantic method preparation (unreleased after alpha.6)
+# Source-bound semantic method preparation
 
 The running input node can explicitly propose and save a one-step method or an
 answerable clarification without authoring JSON inputs:
@@ -48,6 +48,37 @@ answer history as separate untrusted messages. The serialized prompt is limited 
 1024 tokens at temperature zero. Unresolved current questions or continuous/unknown
 workloads fail before inference. These are application bounds, not physical model
 memory/CPU or OS/backend termination guarantees.
+
+### Development generation guidance (2026-11-23)
+
+The candidate method prompt describes both a method and a clarification without
+providing a filled example question. A schema hint constrains the response to
+those two alternatives and lists only templates whose capability occurs in both
+the current review and the fresh runtime vocabulary. With no eligible template,
+the hint contains only the clarification alternative. Parameters remain untrusted
+JSON objects subject to the independent validator and compiler; the hint is not
+a complete semantic or permission check.
+
+Both node-local preparation and granted network interpreter tasks use this
+guidance. A backend rejecting structured output fails the attempt without an
+unconstrained fallback. No Markdown stripping or output repair is added.
+Network tasks bind the exact prompt and schema in their inference-spec digest.
+New method tasks use interpreter task version two. New readers retain the exact
+published version-one method definition, including its prompt and absent schema,
+for retained evidence and explicitly granted legacy work. The version selects
+one definition before validation; changing a version without its pinned digest
+rejects. There is no fallback from version two to version one.
+
+Providers that understand only task version one reject new version-two method
+tasks. Update interpreter providers before the coordinator during a rollout.
+Older coordinators continue issuing version-one work under their existing grants.
+This is generation-definition versioning, not a new grant authorization or
+isolation guarantee. Retained plans/reports keep their formats, and rejected or
+interrupted attempts are not automatically replayed.
+
+The [controlled development comparison](experiments/method-generation.md)
+records the prompt-only failure and the subsequent schema-guided result. It does
+not approve a default model or establish generally useful semantic planning.
 
 Core results have immutable false execution-authority flags and origin-reported
 model attribution. Evidence binds compact job ID, exact positive source revision,

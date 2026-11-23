@@ -12,6 +12,10 @@ fn proposal(question: bool) -> Value {
         "clarification":if question {json!("Which node?")}else{Value::Null}})
 }
 fn task(stage: &str) -> Task {
+    if stage == "legacy_method" {
+        return serde_json::from_str(include_str!("../tests/fixtures/interpreter-method-v1.json"))
+            .unwrap();
+    }
     let mut draft: crate::request_drafts::DraftRecord = serde_json::from_value(json!({
         "schema_version":1,"original_text":"Inspect node status",
         "proposals":[{"operation_id":uuid::Uuid::new_v4().to_string(),"proposal":proposal(stage=="clarification"),
@@ -81,7 +85,7 @@ fn grant(task: &Task) -> ExecutionGrant {
 fn result_fixture(stage: &str) -> (ExecutionGrant, Value) {
     let task = task(stage);
     let g = grant(&task);
-    let output = if stage == "method" {
+    let output = if matches!(stage, "method" | "legacy_method") {
         json!({"schema_version":1,"method":{"schema_version":1,"template":"system_info","params":{},"constraints":{}},"clarification":null})
     } else {
         proposal(false)
@@ -95,7 +99,7 @@ fn result_fixture(stage: &str) -> (ExecutionGrant, Value) {
 
 #[test]
 fn completed_service_reports_revalidate_all_three_stage_sources_and_semantics() {
-    for stage in ["initial", "clarification", "method"] {
+    for stage in ["initial", "clarification", "method", "legacy_method"] {
         let (g, value) = result_fixture(stage);
         let report =
             crate::grants::GrantReport::new(&g, ReceiptState::Completed, value.clone(), None);
@@ -110,7 +114,7 @@ fn completed_service_reports_revalidate_all_three_stage_sources_and_semantics() 
             ("/permission_revision", json!(1)),
             (
                 "/candidate/stage",
-                json!(if stage == "method" {
+                json!(if matches!(stage, "method" | "legacy_method") {
                     "initial"
                 } else {
                     "method"
@@ -133,7 +137,7 @@ fn completed_service_reports_revalidate_all_three_stage_sources_and_semantics() 
 
 #[test]
 fn service_reports_reject_candidate_authority_evidence_and_undisclosed_capabilities() {
-    for stage in ["initial", "clarification", "method"] {
+    for stage in ["initial", "clarification", "method", "legacy_method"] {
         let (g, data) = result_fixture(stage);
         let report = crate::grants::GrantReport::new(&g, ReceiptState::Completed, data, None);
         for field in ["execution_authorized", "model_output_is_untrusted"] {
@@ -141,7 +145,7 @@ fn service_reports_reject_candidate_authority_evidence_and_undisclosed_capabilit
             bad.data["candidate"]["candidate"][field] = json!(field == "execution_authorized");
             assert!(!bad.confirms(&g));
         }
-        if stage == "method" {
+        if matches!(stage, "method" | "legacy_method") {
             for (field, replacement) in [
                 ("source_sha256", json!("0".repeat(64))),
                 ("source_revision", json!(999)),

@@ -70,6 +70,21 @@ pub struct InferenceSpec {
 }
 impl Snapshot {
     fn spec(&self, max_output_tokens: u64) -> Result<InferenceSpec> {
+        self.spec_for_version(max_output_tokens, self.new_task_version())
+    }
+    fn new_task_version(&self) -> u32 {
+        if matches!(self.source, Source::Method { .. }) {
+            2
+        } else {
+            1
+        }
+    }
+    fn spec_for_version(&self, max_output_tokens: u64, task_version: u32) -> Result<InferenceSpec> {
+        ensure!(
+            task_version == 1
+                || (task_version == 2 && matches!(self.source, Source::Method { .. })),
+            "Unsupported interpreter task version"
+        );
         ensure!(
             self.schema_version == 1,
             "Unsupported interpreter source version"
@@ -118,10 +133,26 @@ impl Snapshot {
                         )?),
                     )
                 } else {
-                    (
-                        crate::request_preparation::messages(draft, &self.allowed_capabilities)?,
-                        None,
-                    )
+                    if task_version == 1 {
+                        (
+                            crate::request_preparation::legacy_messages(
+                                draft,
+                                &self.allowed_capabilities,
+                            )?,
+                            None,
+                        )
+                    } else {
+                        (
+                            crate::request_preparation::messages(
+                                draft,
+                                &self.allowed_capabilities,
+                            )?,
+                            Some(crate::request_preparation::output_schema(
+                                draft,
+                                &self.allowed_capabilities,
+                            )?),
+                        )
+                    }
                 }
             }
         };
@@ -161,7 +192,7 @@ impl Task {
     pub fn new(snapshot: Snapshot, max_output_tokens: u64) -> Result<Self> {
         let spec = snapshot.spec(max_output_tokens)?;
         let task = Self {
-            schema_version: 1,
+            schema_version: snapshot.new_task_version(),
             snapshot_sha256: snapshot.digest()?,
             inference_spec_sha256: spec_digest(&spec)?,
             snapshot,
@@ -174,7 +205,9 @@ impl Task {
     /// issuer must independently establish journal ownership and policy authority.
     pub fn validate(&self) -> Result<InferenceSpec> {
         ensure!(
-            self.schema_version == 1,
+            self.schema_version == 1
+                || (self.schema_version == 2
+                    && matches!(self.snapshot.source, Source::Method { .. })),
             "Unsupported interpreter task version"
         );
         ensure!(
@@ -183,7 +216,9 @@ impl Task {
         );
         crate::request_interpretation::digest(&self.snapshot_sha256)?;
         crate::request_interpretation::digest(&self.inference_spec_sha256)?;
-        let spec = self.snapshot.spec(self.max_output_tokens)?;
+        let spec = self
+            .snapshot
+            .spec_for_version(self.max_output_tokens, self.schema_version)?;
         ensure!(
             self.snapshot.digest()? == self.snapshot_sha256,
             "Interpreter source definition changed"
