@@ -72,6 +72,12 @@ fn all_three_stages_reconstruct_exact_existing_inputs_and_round_trip() {
     ] {
         let ceiling = source.source.max_output_tokens();
         let task = Task::new(source.clone(), ceiling).unwrap();
+        let stage = match source.source {
+            Source::Initial { .. } => crate::interpreter_command::Stage::Initial,
+            Source::Clarification { .. } => crate::interpreter_command::Stage::Clarification,
+            Source::Method { .. } => crate::interpreter_command::Stage::Method,
+        };
+        assert_eq!(task.schema_version, stage.task_version());
         let spec = task.validate().unwrap();
         let expected = match &source.source {
             Source::Initial { input } => {

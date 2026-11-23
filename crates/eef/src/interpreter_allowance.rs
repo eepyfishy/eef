@@ -502,6 +502,10 @@ impl crate::Runtime {
             backend: participants.backend.clone(),
             model_id: participants.model_id.clone(),
         };
+        ensure!(
+            current.provider.supports_task_version(task.schema_version),
+            "Interpreter provider does not support the exact task version"
+        );
         let permit = Permit::from_participants(&current, capabilities)?;
         permit.validate(task)?;
         Ok(permit)

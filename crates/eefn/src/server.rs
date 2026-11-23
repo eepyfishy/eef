@@ -686,6 +686,17 @@ impl NodeServer {
         if let Some(serving) = &serving {
             serving.validate()?;
         }
+        let task_support: Option<crate::interpreter_service::TaskSupport> = state
+            .registration
+            .get("interpreter_task_support")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()?;
+        if let Some(support) = &task_support {
+            support.validate()?;
+            if serving.is_none() {
+                bail!("Interpreter task support requires serving permission")
+            }
+        }
         let issuer = self
             .inner
             .authentication
@@ -704,6 +715,7 @@ impl NodeServer {
             issuer_id: issuer,
             limits,
             serving,
+            task_support,
             models: record.models.clone(),
         })
     }
@@ -1742,6 +1754,14 @@ impl NodeServer {
                             )
                         }
                     }
+                    if let Some(value) = message.get("interpreter_task_support") {
+                        let support: crate::interpreter_service::TaskSupport =
+                            serde_json::from_value(value.clone())?;
+                        support.validate()?;
+                        if message.get("interpreter_service").is_none() {
+                            bail!("Interpreter task support requires serving permission")
+                        }
+                    }
                     if let Some(value) = message.get("grant_stop") {
                         let a: crate::grants::stop::Advertisement =
                             serde_json::from_value(value.clone())?;
@@ -1878,6 +1898,7 @@ impl NodeServer {
                                     "network",
                                     "execution_grants",
                                     "interpreter_service",
+                                    "interpreter_task_support",
                                     "registration_receipt",
                                     "peer_transfer",
                                     "grant_stop",

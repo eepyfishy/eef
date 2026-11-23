@@ -7,19 +7,26 @@ import {createServer} from 'node:http';
 import {randomBytes, randomUUID} from 'node:crypto';
 import {coordinatorTemplatePorts, readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 
-export async function networkInputCommandWorkflow() {
+export async function networkInputCommandWorkflow({legacyNodeBinary, legacyCoordinatorBinary} = {}) {
+  assert(!(legacyNodeBinary && legacyCoordinatorBinary), 'Test each upgrade direction separately');
   const root = resolve(import.meta.dirname, '..');
   const bin = resolve(process.env.EEF_TEST_BINARY_DIR || join(root, 'target/debug'));
   await Promise.all(['eef.exe', 'eefn.exe'].map(name => access(join(bin, name))));
   const scratch = await mkdtemp(join(root, '.validation/network-input-commands-'));
+  if (legacyNodeBinary) { legacyNodeBinary = resolve(legacyNodeBinary); await access(legacyNodeBinary); }
+  if (legacyCoordinatorBinary) { legacyCoordinatorBinary = resolve(legacyCoordinatorBinary); await access(legacyCoordinatorBinary); }
+  const legacyFile = join(scratch, 'legacy.json');
   const config = join(scratch, 'eef.yaml'), children = [], usedPorts = new Set();
   const inputId = 'input-' + randomUUID(), providerId = 'provider-' + randomUUID();
+  const legacyId = legacyNodeBinary ? 'legacy-' + randomUUID() : null;
   const providerName = 'serving fixture';
   const env = {...process.env, EEF_NODE_PSK: '', APPDATA: join(scratch, 'appdata'),
     EEF_DISCOVERY_DIR: join(scratch, 'discovery')};
   const calls = [], unexpectedLocalCalls = [], fakeErrors = [];
   function launch(name, file, args, extra = {}) {
-    const child = spawn(join(bin, name + '.exe'), ['--config', file, ...args],
+    const executable = name === 'eef' && legacyCoordinatorBinary ? legacyCoordinatorBinary
+      : name === 'eefn' && file === legacyFile ? legacyNodeBinary : join(bin, name + '.exe');
+    const child = spawn(executable, ['--config', file, ...args],
       {cwd: root, windowsHide: true, env: {...env, ...extra}, stdio: ['ignore', 'pipe', 'pipe']});
     let out = '', err = '';
     child.stdout.on('data', bytes => out = (out + bytes).slice(-1048576));
@@ -97,9 +104,14 @@ export async function networkInputCommandWorkflow() {
         if (Buffer.byteLength(bytes) > 65536) { response.writeHead(413); return response.end('{}'); }
       }
       const body = JSON.parse(bytes); calls.push(body);
-      assert(body.format && typeof body.format === 'object');
       const preparing = body.messages[0].content.startsWith('Propose one method');
-      assert.equal(Object.hasOwn(body.format.anyOf[0].properties, preparing ? 'method' : 'intent'), true);
+      if (preparing && legacyCoordinatorBinary) {
+        assert.equal(body.format, undefined, 'Explicit legacy task reconstruction keeps its published absent schema');
+        assert(body.messages[0].content.includes('Which concrete input should be used?'));
+      } else {
+        assert(body.format && typeof body.format === 'object');
+        assert.equal(Object.hasOwn(body.format.anyOf[0].properties, preparing ? 'method' : 'intent'), true);
+      }
       const result = !preparing
         ? {schema_version: 1, intent: 'information', goal: 'Inspect node status', context_hints: [],
           constraints: [], suggested_capabilities: ['system.info'], complexity: 'simple',
@@ -124,11 +136,11 @@ export async function networkInputCommandWorkflow() {
       {EEF_NODE_PSK: randomBytes(24).toString('hex')});
     await until(async () => (await json(ownerApi + '/api/diagnostics')).initialized, 'owner startup');
     const nodes = [];
-    for (const [id, serving] of [[inputId, false], [providerId, true]]) {
-      const file = join(scratch, (serving ? 'provider' : 'input') + '.json');
+    for (const [id, serving] of [[inputId, false], [providerId, true], ...(legacyId ? [[legacyId, true]] : [])]) {
+      const file = id === legacyId ? legacyFile : join(scratch, (serving ? 'provider' : 'input') + '.json');
       const apiPort = await port(), api = `http://127.0.0.1:${apiPort}`;
       const value = JSON.parse(await readFile(join(root, 'config/node.example.json'), 'utf8'));
-      Object.assign(value, {node_id: id, name: serving ? providerName : 'input fixture', psk: '',
+      Object.assign(value, {node_id: id, name: id === legacyId ? 'legacy fixture' : serving ? providerName : 'input fixture', psk: '',
         endpoints: [], auto_local: false, local_pairing: false, heartbeat_seconds: 0.5,
         metadata: {area: ['fixture', serving ? 'execution' : 'input']}, update: {policy: 'off'},
         input_workflow: {prepare_on_input: true, resolve_on_answer: true, network_interpreter: false},
@@ -144,7 +156,7 @@ export async function networkInputCommandWorkflow() {
       assert.equal(invitation.private, true);
       const decoded = JSON.parse(Buffer.from(invitation.code, 'base64').toString('utf8'));
       assert.equal(decoded.node_id, id);
-      const privateFile = join(scratch, (serving ? 'provider' : 'input') + '-PRIVATE.json');
+      const privateFile = join(scratch, (id === legacyId ? 'legacy' : serving ? 'provider' : 'input') + '-PRIVATE.json');
       await writeFile(privateFile, JSON.stringify(invitation));
       nodes.push({id, serving, file, api, privateFile, credential: decoded.psk});
     }
@@ -154,6 +166,7 @@ export async function networkInputCommandWorkflow() {
     const b = (args, success = true) => cli('eefn', provider.file, args, success);
     await owner(['credentials', 'legacy', '--allow', 'false']);
     await owner(['discovery', 'grant', '--requester', inputId, '--target', providerId]);
+    if (legacyId) await owner(['discovery', 'grant', '--requester', inputId, '--target', legacyId]);
     const runtime = (await owner(['diagnostics'])).runtime_id;
     await owner(['restart']);
     await until(async () => (await owner(['diagnostics'])).runtime_id !== runtime, 'applied credentials and disclosure');
@@ -165,7 +178,7 @@ export async function networkInputCommandWorkflow() {
         return status.connection.state === 'connected' && status.connection.transport === 'pinned_tls13';
       }, 'pinned node connection');
     }
-    await until(async () => (await owner(['diagnostics'])).registered_node_count === 2, 'both logical nodes');
+    await until(async () => (await owner(['diagnostics'])).registered_node_count === nodes.length, 'all logical nodes');
     for (const api of [ownerApi, input.api, provider.api]) assert.equal((await fetch(api + '/')).status, 404);
     const policy = await a(['requests', 'workflow', 'set', '--network-interpreter', 'true']);
     assert.equal(policy.saved_policy.network_interpreter, true);
@@ -174,9 +187,23 @@ export async function networkInputCommandWorkflow() {
     assert.equal((await a(['requests', 'workflow', 'show'])).applied_policy.network_interpreter, true);
     assert.deepEqual(JSON.parse(await readFile(input.file, 'utf8')).models.ollama.selected, []);
     await owner(['interpreter-policies', 'approve', '--origin', inputId, '--provider', providerId,
-      '--max-calls', '2', '--valid-for-seconds', '120']);
-    await until(async () => (await owner(['interpreter-policies', 'resolve', '--origin', inputId])).result?.selected?.connection.node_id === providerId,
+      ...(legacyId ? ['--provider', legacyId] : []), '--max-calls', '2', '--valid-for-seconds', '120']);
+    await until(async () => (await owner(['interpreter-policies', 'resolve', '--origin', inputId,
+      ...(legacyCoordinatorBinary ? [] : ['--stage', 'method'])])).result?.selected?.connection.node_id === providerId,
       'authorized interpreter route');
+    for (const stage of legacyCoordinatorBinary ? [] : ['initial', 'clarification', 'method']) {
+      const route = await owner(['interpreter-policies', 'resolve', '--origin', inputId, '--provider', providerId, '--stage', stage]);
+      assert.equal(route.result.command.stage, stage); assert.equal(route.result.selected.connection.node_id, providerId);
+    }
+    if (legacyId) {
+      for (const stage of ['initial', 'clarification']) {
+        const route = await owner(['interpreter-policies', 'resolve', '--origin', inputId, '--provider', legacyId, '--stage', stage]);
+        assert.equal(route.result.selected.connection.node_id, legacyId);
+      }
+      const incompatible = await owner(['interpreter-policies', 'resolve', '--origin', inputId, '--provider', legacyId, '--stage', 'method']);
+      assert.equal(incompatible.result.selected, null); assert.equal(incompatible.result.allowance_reserved, false);
+      assert.equal(incompatible.result.grants_issued, false); assert.equal(incompatible.result.model_inference_requested, false);
+    }
     assert.equal(calls.length, 0, 'routing and policy setup cannot run inference');
     const original = '  Inspect the other node status\n', operation = randomUUID();
     const inputArgs = ['requests', 'input', '--text', original, '--operation-id', operation];
@@ -185,7 +212,8 @@ export async function networkInputCommandWorkflow() {
     assert.equal(opened.status, 'awaiting_approval');
     assert.equal(opened.execution_authorized, false); assert.equal(opened.dispatched, false);
     for (const stage of ['interpretation', 'preparation']) {
-      assert.equal(opened[stage].network_interpreter.result.attempt.provider, providerId);
+      const selectedProvider = opened[stage].network_interpreter.result.attempt.provider;
+      assert(stage === 'preparation' ? selectedProvider === providerId : [providerId, legacyId].includes(selectedProvider));
       assert.equal(opened[stage].network_interpreter.result.model_inference_requested, true);
     }
     assert.equal(opened.interpretation.model_inference_requested, false);
@@ -230,6 +258,10 @@ export async function networkInputCommandWorkflow() {
       bounded_network_interpretation_calls: 2, separate_owner_approval: true, remote_executor_report: true,
       result_read_through_origin: true, executor_plan_denied: true, receipt_reuse_without_replay: true,
       dashboard_required: false, real_inference: false, physical_two_pc: false};
+    result.stage_compatible_routes_checked = !legacyCoordinatorBinary;
+    result.legacy_method_provider_exclusion_checked = Boolean(legacyId);
+    result.legacy_coordinator_registration_checked = Boolean(legacyCoordinatorBinary);
+    result.explicit_legacy_method_definition_checked = Boolean(legacyCoordinatorBinary);
     await writeFile(join(scratch, 'results.json'), JSON.stringify(result, null, 2));
     console.log('Public network input-to-execution command validation passed: ' + scratch);
     return result;

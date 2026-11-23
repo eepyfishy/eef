@@ -47,6 +47,50 @@ async fn fixture() -> NodeServer {
     server
 }
 #[tokio::test]
+async fn interpreter_task_support_is_refreshed_from_the_authenticated_registration() {
+    let server = fixture().await;
+    let legacy = server.interpreter_session("owner", 30).await.unwrap();
+    assert!(legacy.supports_task_version(1) && !legacy.supports_task_version(2));
+    {
+        let mut connections = server.inner.connections.write().await;
+        connections
+            .get_mut("owner")
+            .unwrap()
+            .state
+            .as_mut()
+            .unwrap()
+            .registration["interpreter_task_support"] =
+            json!(crate::interpreter_service::TaskSupport::current());
+    }
+    let current = server.interpreter_session("owner", 30).await.unwrap();
+    assert!(current.supports_task_version(2));
+    assert!(legacy.same_connection(&current));
+    {
+        let mut connections = server.inner.connections.write().await;
+        connections
+            .get_mut("owner")
+            .unwrap()
+            .state
+            .as_mut()
+            .unwrap()
+            .registration
+            .as_object_mut()
+            .unwrap()
+            .remove("interpreter_task_support");
+    }
+    assert!(
+        !server
+            .interpreter_session("owner", 30)
+            .await
+            .unwrap()
+            .supports_task_version(2)
+    );
+    assert!(
+        current.supports_task_version(2),
+        "An old snapshot must not be silently renewed"
+    );
+}
+#[tokio::test]
 async fn interpreter_snapshot_requires_fresh_private_registration_and_valid_grant_and_service_metadata()
  {
     for problem in [
@@ -57,6 +101,8 @@ async fn interpreter_snapshot_requires_fresh_private_registration_and_valid_gran
         "limits",
         "timing",
         "service",
+        "task-support",
+        "task-without-service",
         "identity",
     ] {
         let server = fixture().await;
@@ -65,6 +111,21 @@ async fn interpreter_snapshot_requires_fresh_private_registration_and_valid_gran
             let mut connections = server.inner.connections.write().await;
             let c = connections.get_mut("owner").unwrap();
             match problem {
+                "task-support" => {
+                    c.state.as_mut().unwrap().registration["interpreter_task_support"] =
+                        json!({"schema_version":1,"versions":[1,1]})
+                }
+                "task-without-service" => {
+                    c.state.as_mut().unwrap().registration["interpreter_task_support"] =
+                        json!(crate::interpreter_service::TaskSupport::current());
+                    c.state
+                        .as_mut()
+                        .unwrap()
+                        .registration
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("interpreter_service");
+                }
                 "legacy" => c.credential_transport = false,
                 "nil-session" => c.session_id = Uuid::nil(),
                 "stale" => c.last_seen = Instant::now() - Duration::from_secs(30),

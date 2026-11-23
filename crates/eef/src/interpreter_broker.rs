@@ -277,6 +277,7 @@ impl Runtime {
             node_id: command.preferences.provider.clone(),
             backend: command.preferences.backend.clone(),
             model_id: command.preferences.model_id.clone(),
+            stage: Some(command.stage),
         };
         let preview = crate::interpreter_routing::resolve(
             self,
@@ -344,6 +345,7 @@ impl Runtime {
             provider.session_id() == selected.connection.session_id
                 && provider.runtime_id() == selected.connection.runtime_id
                 && provider.permission_revision() == Some(selected.permission_revision)
+                && provider.supports_task_version(task.schema_version)
                 && json!(provider.limits()) == json!(selected.grant_limits),
             "Selected interpreter changed; no substitution"
         );

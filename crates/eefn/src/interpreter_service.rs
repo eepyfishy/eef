@@ -20,6 +20,41 @@ impl Advertisement {
     }
 }
 
+/// Optional registration hint, separate from the published service shape so
+/// older coordinators can continue accepting new nodes. Never grants authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskSupport {
+    pub schema_version: u32,
+    pub versions: Vec<u32>,
+}
+impl TaskSupport {
+    pub fn current() -> Self {
+        Self {
+            schema_version: 1,
+            versions: vec![
+                crate::interpreter_task::LEGACY_VERSION,
+                crate::interpreter_task::METHOD_VERSION,
+            ],
+        }
+    }
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema_version == 1 && !self.versions.is_empty() && self.versions.len() <= 16,
+            "Invalid interpreter task support advertisement"
+        );
+        let mut versions = std::collections::HashSet::new();
+        ensure!(
+            self.versions.iter().all(|v| *v > 0 && versions.insert(*v)),
+            "Invalid or duplicate interpreter task versions"
+        );
+        Ok(())
+    }
+    pub fn supports(&self, version: u32) -> bool {
+        self.validate().is_ok() && self.versions.contains(&version)
+    }
+}
+
 /// Constructed only from one live independently authenticated gateway route.
 /// It is intentionally not deserializable and cannot authorize a later send.
 #[derive(Clone, Debug)]
@@ -31,6 +66,7 @@ pub struct Session {
     pub(crate) issuer_id: String,
     pub(crate) limits: GrantPolicy,
     pub(crate) serving: Option<Advertisement>,
+    pub(crate) task_support: Option<TaskSupport>,
     pub(crate) models: Vec<PeerModel>,
 }
 impl Session {
@@ -57,6 +93,16 @@ impl Session {
     }
     pub fn permission_revision(&self) -> Option<u64> {
         self.serving.as_ref().map(|a| a.permission_revision)
+    }
+    pub fn supports_task_version(&self, version: u32) -> bool {
+        self.is_fresh()
+            && self.serving.as_ref().is_some_and(|a| a.validate().is_ok())
+            && self
+                .task_support
+                .as_ref()
+                .map_or(version == crate::interpreter_task::LEGACY_VERSION, |a| {
+                    a.supports(version)
+                })
     }
     pub fn same_connection(&self, other: &Self) -> bool {
         self.node_id == other.node_id
@@ -94,6 +140,43 @@ impl Session {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn task_support_is_bounded_explicit_and_separate_from_the_legacy_service_shape() {
+        let current = TaskSupport::current();
+        assert!(current.supports(1) && current.supports(2));
+        assert!(!current.supports(0) && !current.supports(3));
+        for versions in [vec![], vec![0], vec![1, 1], (1..=17).collect()] {
+            assert!(
+                TaskSupport {
+                    schema_version: 1,
+                    versions
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        let future = TaskSupport {
+            schema_version: 1,
+            versions: vec![99],
+        };
+        future.validate().unwrap();
+        assert!(!future.supports(1) && !future.supports(2));
+        assert!(
+            serde_json::from_value::<TaskSupport>(
+                json!({"schema_version":1,"versions":[1,2],"execution_authorized":true})
+            )
+            .is_err()
+        );
+        assert_eq!(
+            serde_json::to_value(Advertisement {
+                schema_version: 1,
+                permission_revision: 4
+            })
+            .unwrap(),
+            json!({"schema_version":1,"permission_revision":4}),
+            "Keep the published strict service shape unchanged"
+        );
+    }
     #[test]
     fn service_advertisements_never_infer_roles_or_choose_duplicate_or_unavailable_models() {
         assert!(
@@ -133,12 +216,25 @@ mod tests {
                 schema_version: 1,
                 permission_revision: 4,
             }),
+            task_support: Some(TaskSupport::current()),
             models: vec![model.clone()],
         };
         assert!(session.serves("ollama", "chosen"));
+        assert!(session.supports_task_version(1) && session.supports_task_version(2));
+        let mut legacy = session.clone();
+        legacy.task_support = None;
+        assert!(legacy.supports_task_version(1));
+        assert!(!legacy.supports_task_version(2));
+        legacy.task_support = Some(TaskSupport {
+            schema_version: 1,
+            versions: vec![2],
+        });
+        assert!(!legacy.supports_task_version(1));
+        assert!(legacy.supports_task_version(2));
         let mut expired = session.clone();
         expired.fresh_until = std::time::Instant::now();
         assert!(!expired.is_fresh());
+        assert!(!expired.supports_task_version(1) && !expired.supports_task_version(2));
         assert!(!expired.serves("ollama", "chosen"));
         assert!(!session.serves("llamacpp", "chosen"));
         assert_eq!(session.permission_revision(), Some(4));
@@ -146,6 +242,7 @@ mod tests {
         assert!(!session.serves("ollama", "chosen"));
         session.models.pop();
         session.serving = None;
+        assert!(!session.supports_task_version(1) && !session.supports_task_version(2));
         assert!(!session.serves("ollama", "chosen"));
         session.serving = Some(Advertisement {
             schema_version: 1,

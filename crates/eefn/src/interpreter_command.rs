@@ -12,6 +12,12 @@ pub enum Stage {
     Method,
 }
 impl Stage {
+    pub fn task_version(self) -> u32 {
+        match self {
+            Self::Method => crate::interpreter_task::METHOD_VERSION,
+            Self::Initial | Self::Clarification => crate::interpreter_task::LEGACY_VERSION,
+        }
+    }
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Initial => "initial",

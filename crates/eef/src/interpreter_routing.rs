@@ -23,6 +23,9 @@ pub struct Options {
     pub backend: Option<String>,
     #[arg(long)]
     pub model_id: Option<String>,
+    #[arg(long)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<eefn::interpreter_command::Stage>,
 }
 impl Options {
     pub fn validate(&self) -> Result<()> {
@@ -264,6 +267,10 @@ pub(crate) async fn resolve(
         };
         if provider.issuer_id() != policy.issuer_id
             || !provider.serves(&candidate.backend, &candidate.model_id)
+            || request
+                .command
+                .stage
+                .is_some_and(|s| !provider.supports_task_version(s.task_version()))
         {
             continue;
         }
@@ -287,7 +294,11 @@ pub(crate) async fn resolve(
             provider.same_connection(&current)
                 && provider.permission_revision() == current.permission_revision()
                 && json!(provider.limits()) == json!(current.limits())
-                && current.serves(&model.backend, &model.model_id),
+                && current.serves(&model.backend, &model.model_id)
+                && request
+                    .command
+                    .stage
+                    .is_none_or(|s| current.supports_task_version(s.task_version())),
             "Selected interpreter changed; no replacement provider was selected"
         );
         Some(Selected {
@@ -340,7 +351,7 @@ pub fn render(value: &Value) -> Result<String> {
         confirmed(value, &report.command, &report.runtime_id),
         "Unconfirmed interpreter route"
     );
-    let text = if let Some(selected) = report.selected {
+    let mut text = if let Some(selected) = report.selected {
         format!(
             "Advertised interpreter for node {}: node {}, model {} ({}).\n",
             report.origin.node_id, selected.connection.node_id, selected.model_id, selected.backend
@@ -351,6 +362,9 @@ pub fn render(value: &Value) -> Result<String> {
             report.origin.node_id
         )
     };
+    if let Some(stage) = report.command.stage {
+        text.push_str(&format!("Requested stage: {}.\n", stage.as_str()));
+    }
     Ok(
         text + "Read-only routing observation. No allowance, grant or model call was started. Automatic network interpretation is not available yet.\n"
     )

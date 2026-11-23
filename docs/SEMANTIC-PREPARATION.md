@@ -70,7 +70,10 @@ one definition before validation; changing a version without its pinned digest
 rejects. There is no fallback from version two to version one.
 
 Providers that understand only task version one reject new version-two method
-tasks. Update interpreter providers before the coordinator during a rollout.
+tasks. The [stage compatibility increment](INTERPRETER-ROUTING.md#stage-compatibility-development)
+filters their missing support before issuing new method work, while preserving
+their initial/clarification eligibility. Update interpreter providers before
+the coordinator during a rollout when no compatible provider is available.
 Older coordinators continue issuing version-one work under their existing grants.
 This is generation-definition versioning, not a new grant authorization or
 isolation guarantee. Retained plans/reports keep their formats, and rejected or

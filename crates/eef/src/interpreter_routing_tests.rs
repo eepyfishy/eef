@@ -15,6 +15,10 @@ fn route_options_and_confirmation_refuse_authority_and_preference_substitution()
         ..Default::default()
     };
     command.validate().unwrap();
+    assert!(
+        json!(command).get("stage").is_none(),
+        "Keep the legacy route command shape when no stage is requested"
+    );
     let mut bad = command.clone();
     bad.node_id = Some("other".into());
     assert!(bad.validate().is_err());
@@ -53,6 +57,17 @@ fn route_options_and_confirmation_refuse_authority_and_preference_substitution()
     };
     let value = json!(report);
     assert!(confirmed(&value, &command, &runtime));
+    let mut staged = command.clone();
+    staged.stage = Some(eefn::interpreter_command::Stage::Method);
+    assert!(!confirmed(&value, &staged, &runtime));
+    let mut staged_value = value.clone();
+    staged_value["command"]["stage"] = json!("method");
+    assert!(confirmed(&staged_value, &staged, &runtime));
+    assert!(
+        render(&staged_value)
+            .unwrap()
+            .contains("Requested stage: method.")
+    );
     for flag in [
         "grants_issued",
         "model_inference_requested",

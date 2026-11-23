@@ -413,6 +413,8 @@ impl NodeClient {
         if self.grant_ledger.is_some() && self.tls_config.is_some() && receipt.is_some() {
             if let Some(serving) = self.engine.interpreter_service_advertisement() {
                 message["interpreter_service"] = json!(serving);
+                message["interpreter_task_support"] =
+                    json!(crate::interpreter_service::TaskSupport::current());
             }
         }
         message["grant_stop"] = json!(crate::grants::stop::Advertisement::new(

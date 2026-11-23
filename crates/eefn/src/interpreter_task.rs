@@ -7,6 +7,8 @@ use serde_json::{Value, json};
 
 pub const MAX_SNAPSHOT_BYTES: usize = 64 * 1024;
 pub const MAX_TASK_BYTES: usize = 128 * 1024;
+pub const LEGACY_VERSION: u32 = 1;
+pub const METHOD_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "stage", rename_all = "snake_case", deny_unknown_fields)]
@@ -74,9 +76,9 @@ impl Snapshot {
     }
     fn new_task_version(&self) -> u32 {
         if matches!(self.source, Source::Method { .. }) {
-            2
+            METHOD_VERSION
         } else {
-            1
+            LEGACY_VERSION
         }
     }
     fn spec_for_version(&self, max_output_tokens: u64, task_version: u32) -> Result<InferenceSpec> {
