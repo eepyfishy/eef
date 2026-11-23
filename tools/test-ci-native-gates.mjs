@@ -6,6 +6,13 @@ const workflow=(await readFile(new URL('../.github/workflows/verify.yml',import.
 function step(name){const result=workflow.split(/^      - name: /m).find(block=>block.startsWith(name+'\n'));assert(result,'Missing guarded step');return result;}
 const tests=step('Workspace and all-target regression tests'),build=step('Build Windows command services and isolated helpers'),native=step('Native Windows synthetic regressions (no installer or model download)');
 const firewall=step('Windows firewall command mocks (no policy changes)');
+const rollback=step('Native EXE setup rollback (synthetic; no release acceptance)');
+assert.match(rollback,/^        shell: powershell$/m);
+assert.match(rollback,/\$ErrorActionPreference = 'Stop'\n          & \.\/tools\/test-installer-rollback\.ps1 -BinaryDir target\/debug -SyntheticCi/);
+const rollbackScript=(await readFile(new URL('test-installer-rollback.ps1',import.meta.url),'utf8')).replace(/\r\n/g,'\n');
+assert.match(rollbackScript,/if \(\$SyntheticCi -and \(\$env:GITHUB_ACTIONS -cne 'true' -or \$env:RUNNER_OS -cne 'Windows'\)\)/);
+assert.match(rollbackScript,/if \(-not \$SyntheticCi\) \{\n            & \(Join-Path \$PSScriptRoot 'scan-windows\.ps1'\)/);
+assert.match(rollbackScript,/defender_scanned=\(-not \[bool\]\$SyntheticCi\)/);
 const evaluator=step('Interpreter evaluation guards and grading (no model execution)');
 assert(!/^        if:/m.test(evaluator),'Interpreter guards apply to every matrix job');
 assert.match(evaluator,/node tools\/test-interpreter-quality-options\.mjs\n          if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/);
@@ -39,15 +46,20 @@ function condition(block,expected){
 }
 const canBuild=condition(build,"!cancelled() && matrix.os == 'windows-2025' && matrix.mode == 'headless' && (steps.workspace_tests.outcome == 'success' || steps.workspace_tests.outcome == 'failure')");
 const canRun=condition(native,"!cancelled() && matrix.os == 'windows-2025' && matrix.mode == 'headless' && steps.native_build.outcome == 'success'");
+const canRollback=condition(rollback,"!cancelled() && matrix.os == 'windows-2025' && matrix.mode == 'headless' && steps.native_build.outcome == 'success'");
 const canMock=condition(firewall,"!cancelled() && matrix.os == 'windows-2025' && matrix.mode == 'headless'");
 let checked=0;
 for(const os of ['windows-2025','ubuntu-24.04'])for(const mode of ['headless','dashboard'])for(const cancelled of [false,true])for(const rust of ['success','failure','skipped','cancelled','','unknown'])for(const fresh of ['success','failure','skipped','cancelled','','unknown']){
  const matrix={os,mode},steps={workspace_tests:{outcome:rust},native_build:{outcome:fresh}},eligible=!cancelled&&os==='windows-2025'&&mode==='headless';
  assert.equal(canBuild(matrix,steps,()=>cancelled),eligible&&['success','failure'].includes(rust));
  assert.equal(canRun(matrix,steps,()=>cancelled),eligible&&fresh==='success');checked++;
+ assert.equal(canRollback(matrix,steps,()=>cancelled),eligible&&fresh==='success','EXE rollback uses fresh helpers and remains separate from full-package/Defender acceptance');
  assert.equal(canMock(matrix,steps,()=>cancelled),eligible,'Pure firewall mocks require Windows but no application build or policy access');
  const reachable={...steps,native_build:{outcome:canBuild(matrix,steps,()=>cancelled)?fresh:'skipped'}};
- if(!canBuild(matrix,steps,()=>cancelled))assert.equal(canRun(matrix,reachable,()=>cancelled),false,'Skipped prerequisites must not reach native execution');
+ if(!canBuild(matrix,steps,()=>cancelled)){
+  assert.equal(canRun(matrix,reachable,()=>cancelled),false,'Skipped prerequisites must not reach native execution');
+  assert.equal(canRollback(matrix,reachable,()=>cancelled),false,'Skipped prerequisites must not reach installer rollback execution');
+ }
 }
 const scripts=[...native.matchAll(/'(test-[\w-]+\.mjs)'/g)].map(match=>match[1]);assert.equal(scripts.length,39);assert.equal(new Set(scripts).size,39);
 assert(scripts.includes('test-interpreter-quality-ollama.mjs'));

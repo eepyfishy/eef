@@ -29,6 +29,14 @@ change the current stable v0.4.0 implementation and acceptance requirements.
 
 ## Direction and policy changes
 
+Development [EXE setup rollback](EXE-SETUP-ROLLBACK.md) now covers ordinary
+failures across payloads, settings preparation, update selection and shortcuts
+under the shared setup/update lock. Local acceptance passes 51 installer Rust
+tests, six native failure-and-retry cases and the existing wizard recovery
+checks using synthetic payloads. This is not automatic crash recovery: durable
+journaling, interruption tests, current full-package acceptance, production MSI
+rollback, signing/Defender and stable-release gates remain open.
+
 One-shot stop persistence passes scoped source acceptance at `117c750` in
 [run 44318762717](https://github.com/eepyfishy/eef/actions/runs/44318762717):
 1,879 Windows/headless Rust tests plus one ignored test, all 37 native suites and

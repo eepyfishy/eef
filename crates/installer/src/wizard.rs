@@ -42,7 +42,7 @@ enum Page {
 struct Work {
     percent: u32,
     message: String,
-    result: Option<std::result::Result<(), String>>,
+    result: Option<std::result::Result<Option<String>, String>>,
 }
 struct State {
     work: Arc<Mutex<Work>>,
@@ -550,7 +550,12 @@ unsafe extern "system" fn window_proc(
                     }
                     if let Some(result) = result {
                         match result {
-                            Ok(()) => show_page(window, state, Page::Finished),
+                            Ok(warning) => {
+                                show_page(window, state, Page::Finished);
+                                if let Some(warning) = warning {
+                                    text(window, STATUS, &warning);
+                                }
+                            }
                             Err(error) => {
                                 show_page(window, state, Page::Review);
                                 text(

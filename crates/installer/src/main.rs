@@ -16,6 +16,7 @@ pub mod atomic_file;
 mod coordinator_config;
 #[path = "../../../shared/installer_payload.rs"]
 mod installer_payload;
+mod transaction;
 #[cfg(windows)]
 mod wizard;
 type Progress = Option<std::sync::Arc<dyn Fn(u32, &str) + Send + Sync>>;
@@ -62,10 +63,10 @@ fn run() -> Result<()> {
     if !options.quiet {
         return wizard::run(options);
     }
-    install(options, None)
+    install(options, None).map(|_| ())
 }
 
-fn install(options: Options, progress: Progress) -> Result<()> {
+fn install(options: Options, progress: Progress) -> Result<Option<String>> {
     if let Some(report) = &progress {
         report(2, "Checking the installer and destination…");
     }
@@ -81,15 +82,10 @@ fn install(options: Options, progress: Progress) -> Result<()> {
         }
     };
     validate_install_destination(&executable, &install_dir, &manifest.name)?;
-    let _installation_lock = extract_payload(&payload, &install_dir, &manifest.name, &progress)?;
-    if manifest.name == "eef" {
-        ensure_coordinator_secret(&install_dir.join(product.config))?;
-    }
-    select_manual_install(&install_dir)?;
-
+    let startup_path = startup_path(product)?;
     let startup = options.startup.unwrap_or_else(|| {
         if options.quiet {
-            startup_path(product).is_ok_and(|path| path.is_file())
+            startup_path.is_file()
         } else {
             ask_yes_no(
                 "Startup application",
@@ -97,11 +93,27 @@ fn install(options: Options, progress: Progress) -> Result<()> {
             )
         }
     });
-    set_startup(&install_dir, product, startup)?;
-    if let Some(report) = &progress {
-        report(95, "Creating your Start menu entry…");
+    let shortcuts = Shortcuts {
+        startup: startup_path,
+        menu: app_shortcut_path(product)?,
+    };
+    let (_installation_lock, cleanup_warnings) = install_files(
+        &payload,
+        &install_dir,
+        &manifest.name,
+        startup,
+        &shortcuts,
+        &progress,
+    )?;
+    let warning = (!cleanup_warnings.is_empty()).then(|| {
+        format!(
+            "Installation completed. Some previous-file backups could not be removed:\n{}",
+            cleanup_warnings.join("\n")
+        )
+    });
+    if let Some(warning) = &warning {
+        eprintln!("{warning}");
     }
-    create_app_shortcut(&install_dir, product)?;
 
     let installed_executable = install_dir.join(product.executable);
     let launch = options.launch.unwrap_or_else(|| {
@@ -129,7 +141,7 @@ fn install(options: Options, progress: Progress) -> Result<()> {
     if let Some(report) = &progress {
         report(100, "Installation complete");
     }
-    Ok(())
+    Ok(warning)
 }
 
 fn parse_options() -> Result<Options> {
@@ -240,12 +252,7 @@ fn product(name: &str) -> Result<&'static Product> {
     }
 }
 
-fn extract_payload(
-    payload: &[u8],
-    destination: &Path,
-    product: &str,
-    progress: &Progress,
-) -> Result<File> {
+fn prepare_extraction(payload: &[u8], destination: &Path) -> Result<File> {
     let required = verified_unpacked_size(payload)?;
     check_install_space(destination, required)?;
     fs::create_dir_all(destination)?;
@@ -263,6 +270,57 @@ fn extract_payload(
     let installation_lock = lock_options.open(destination.join(INSTALL_LOCK))?;
     fs2::FileExt::try_lock_exclusive(&installation_lock)
         .context("Another setup, update or repair is using this folder. Wait for it to finish before retrying")?;
+    Ok(installation_lock)
+}
+
+struct Shortcuts {
+    startup: PathBuf,
+    menu: PathBuf,
+}
+
+fn install_files(
+    payload: &[u8],
+    destination: &Path,
+    name: &str,
+    startup: bool,
+    shortcuts: &Shortcuts,
+    progress: &Progress,
+) -> Result<(File, Vec<String>)> {
+    let lock = prepare_extraction(payload, destination)?;
+    let mut transaction = transaction::Transaction::new();
+    let result = (|| {
+        apply_payload(payload, destination, name, progress, &mut transaction)?;
+        let product = product(name)?;
+        if name == "eef" {
+            transaction
+                .edit(&destination.join(product.config), ensure_coordinator_secret)
+                .context("Prepare coordinator settings")?;
+        }
+        select_manual_install(destination, &mut transaction)?;
+        set_startup(
+            destination,
+            product,
+            startup,
+            &shortcuts.startup,
+            &mut transaction,
+        )?;
+        if let Some(report) = progress {
+            report(95, "Creating your Start menu entry…");
+        }
+        create_app_shortcut(destination, product, &shortcuts.menu, &mut transaction)
+            .with_context(|| format!("Create Start menu entry: {}", shortcuts.menu.display()))
+    })();
+    let warnings = transaction.finish(result)?;
+    Ok((lock, warnings))
+}
+
+fn apply_payload(
+    payload: &[u8],
+    destination: &Path,
+    product: &str,
+    progress: &Progress,
+    transaction: &mut transaction::Transaction,
+) -> Result<()> {
     validate_installation_role(destination, product)?;
     let _replacement_guards = replacement_guards(payload, destination, product)?;
     let mut archive = ZipArchive::new(Cursor::new(payload))?;
@@ -292,18 +350,25 @@ fn extract_payload(
             if output.exists() {
                 continue;
             }
-            match atomic_file::create_with(&output, write) {
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            match transaction.create_with(&output, write) {
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists) =>
+                {
+                    continue;
+                }
                 result => {
                     result.with_context(|| format!("create settings: {}", output.display()))?
                 }
             }
         } else {
-            atomic_file::replace_with(&output, write)
+            transaction
+                .replace_with(&output, write)
                 .with_context(|| format!("install application file: {}", output.display()))?;
         }
     }
-    Ok(installation_lock)
+    Ok(())
 }
 
 fn validate_installation_role(destination: &Path, expected: &str) -> Result<()> {
@@ -399,7 +464,10 @@ fn should_preserve_config(product: &str, relative: &Path) -> bool {
         || (product == "eefn" && normalized.eq_ignore_ascii_case("config.json"))
 }
 
-fn select_manual_install(destination: &Path) -> Result<()> {
+fn select_manual_install(
+    destination: &Path,
+    transaction: &mut transaction::Transaction,
+) -> Result<()> {
     // A manual installer writes the new root executable. An old updater's
     // current.txt would otherwise hand off to an older versions/ executable.
     // Preserve the selection for recovery; never remove prior version folders.
@@ -416,7 +484,7 @@ fn select_manual_install(destination: &Path) -> Result<()> {
         "current.before-manual-install-{}.txt",
         hex::encode(rand::random::<[u8; 16]>())
     ));
-    fs::rename(&selected, backup).context(
+    transaction.preserve_selection(&selected, &backup).context(
         "Preserve the previous update selection before launching the manual installation",
     )?;
     Ok(())
@@ -427,16 +495,21 @@ fn ensure_coordinator_secret(path: &Path) -> Result<()> {
     coordinator_config::ensure_secret_file(path)
 }
 
-fn set_startup(install_dir: &Path, product: &Product, enabled: bool) -> Result<()> {
-    let startup = startup_path(product)?;
+fn set_startup(
+    install_dir: &Path,
+    product: &Product,
+    enabled: bool,
+    startup: &Path,
+    transaction: &mut transaction::Transaction,
+) -> Result<()> {
     if enabled {
         fs::create_dir_all(startup.parent().expect("startup parent"))?;
         let executable = install_dir.join(product.executable);
         let config = install_dir.join(product.config);
         reject_cmd_text(&executable.to_string_lossy())?;
         reject_cmd_text(&config.to_string_lossy())?;
-        atomic_file::write(
-            &startup,
+        transaction.write(
+            startup,
             format!(
                 "@echo off\r\nstart \"\" /min \"{}\" --config \"{}\"\r\n",
                 executable.display(),
@@ -444,8 +517,8 @@ fn set_startup(install_dir: &Path, product: &Product, enabled: bool) -> Result<(
             )
             .as_bytes(),
         )?;
-    } else if startup.is_file() {
-        fs::remove_file(startup)?;
+    } else {
+        transaction.remove(startup)?;
     }
     Ok(())
 }
@@ -543,16 +616,26 @@ fn check_install_space(destination: &Path, payload_bytes: u64) -> Result<()> {
     Ok(())
 }
 
-fn create_app_shortcut(directory: &Path, product: &Product) -> Result<()> {
-    let menu = PathBuf::from(std::env::var_os("APPDATA").context("APPDATA is unavailable")?)
-        .join("Microsoft/Windows/Start Menu/Programs/eef");
-    fs::create_dir_all(&menu)?;
+fn app_shortcut_path(product: &Product) -> Result<PathBuf> {
+    Ok(
+        PathBuf::from(std::env::var_os("APPDATA").context("APPDATA is unavailable")?)
+            .join("Microsoft/Windows/Start Menu/Programs/eef")
+            .join(format!("{}.cmd", product.display)),
+    )
+}
+
+fn create_app_shortcut(
+    directory: &Path,
+    product: &Product,
+    shortcut: &Path,
+    transaction: &mut transaction::Transaction,
+) -> Result<()> {
     let executable = directory.join(product.executable);
     let config = directory.join(product.config);
     reject_cmd_text(&executable.to_string_lossy())?;
     reject_cmd_text(&config.to_string_lossy())?;
-    atomic_file::write(
-        &menu.join(format!("{}.cmd", product.display)),
+    transaction.write(
+        shortcut,
         format!(
             "@echo off\r\nstart \"\" /min \"{}\" --config \"{}\" --open-dashboard\r\n",
             executable.display(),
@@ -665,6 +748,26 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    fn extract_payload(
+        payload: &[u8],
+        destination: &Path,
+        product: &str,
+        progress: &Progress,
+    ) -> Result<File> {
+        let lock = prepare_extraction(payload, destination)?;
+        let mut transaction = transaction::Transaction::new();
+        let result = apply_payload(payload, destination, product, progress, &mut transaction);
+        assert!(transaction.finish(result)?.is_empty());
+        Ok(lock)
+    }
+
+    fn select_manual_install(destination: &Path) -> Result<()> {
+        let mut transaction = transaction::Transaction::new();
+        let result = super::select_manual_install(destination, &mut transaction);
+        assert!(transaction.finish(result)?.is_empty());
+        Ok(())
+    }
+
     fn zip_payload(name: &str, data: &[u8]) -> Vec<u8> {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default()
@@ -672,6 +775,196 @@ mod tests {
         writer.start_file(name, options).unwrap();
         writer.write_all(data).unwrap();
         writer.finish().unwrap().into_inner()
+    }
+
+    fn setup_fixture_payload(name: &str) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        let manifest =
+            serde_json::to_vec(&serde_json::json!({"name":name,"version":"new"})).unwrap();
+        let executable = format!("{name}.exe");
+        let config = product(name).unwrap().config;
+        for (path, contents) in [
+            ("bundle.json", manifest.as_slice()),
+            (&executable, b"new application"),
+            (config, b"{}"),
+            ("runtime/new.dll", b"new runtime"),
+        ] {
+            writer.start_file(path, options).unwrap();
+            writer.write_all(contents).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    fn setup_files_under(path: &Path) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        for entry in fs::read_dir(path).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                files.extend(setup_files_under(&entry.path()));
+            } else {
+                files.push(entry.path());
+            }
+        }
+        files.sort();
+        files
+    }
+
+    #[test]
+    fn late_start_menu_failure_restores_upgraded_files_settings_selector_and_startup() {
+        for name in ["eef", "eefn"] {
+            for enable_startup in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let root = dir.path().join("installation");
+                fs::create_dir(&root).unwrap();
+                let product = product(name).unwrap();
+                let manifest =
+                    serde_json::to_vec(&serde_json::json!({"name":name,"version":"old"})).unwrap();
+                fs::write(root.join("bundle.json"), &manifest).unwrap();
+                fs::write(root.join(product.executable), b"old application").unwrap();
+                fs::create_dir_all(root.join(product.config).parent().unwrap()).unwrap();
+                let settings: &[u8] = if name == "eef" {
+                    b"# owner\nnode:\n  psk: ''\nfuture: keep\n"
+                } else {
+                    b"{\"owner\":true}"
+                };
+                fs::write(root.join(product.config), settings).unwrap();
+                fs::write(root.join("current.txt"), b"old-version\n").unwrap();
+                fs::write(root.join("owner.data"), b"owner data").unwrap();
+                let startup = dir.path().join("startup.cmd");
+                fs::write(&startup, b"old startup choice").unwrap();
+                let blocked = dir.path().join("blocked-menu");
+                fs::write(&blocked, b"owner file blocking the menu parent").unwrap();
+                let before = setup_files_under(dir.path())
+                    .into_iter()
+                    .map(|path| {
+                        let bytes = fs::read(&path).unwrap();
+                        (path, bytes)
+                    })
+                    .collect::<Vec<_>>();
+                let shortcuts = Shortcuts {
+                    startup,
+                    menu: blocked.join("entry.cmd"),
+                };
+                let reached_menu = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let reached = reached_menu.clone();
+                let callback_root = root.clone();
+                let callback_startup = shortcuts.startup.clone();
+                let progress: Progress = Some(std::sync::Arc::new(move |percent, _| {
+                    if percent == 95 {
+                        assert_eq!(
+                            fs::read(callback_root.join(product.executable)).unwrap(),
+                            b"new application"
+                        );
+                        assert!(callback_root.join("runtime/new.dll").is_file());
+                        assert!(!callback_root.join("current.txt").exists());
+                        if enable_startup {
+                            assert_ne!(fs::read(&callback_startup).unwrap(), b"old startup choice");
+                        } else {
+                            assert!(!callback_startup.exists());
+                        }
+                        if name == "eef" {
+                            let settings: Value = serde_yml::from_slice(
+                                &fs::read(callback_root.join(product.config)).unwrap(),
+                            )
+                            .unwrap();
+                            assert_eq!(settings["node"]["psk"].as_str().unwrap().len(), 64);
+                        }
+                        reached.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                }));
+                let error = install_files(
+                    &setup_fixture_payload(name),
+                    &root,
+                    name,
+                    enable_startup,
+                    &shortcuts,
+                    &progress,
+                )
+                .unwrap_err();
+                assert!(reached_menu.load(std::sync::atomic::Ordering::SeqCst));
+                assert!(format!("{error:#}").contains("Create Start menu entry"));
+                assert!(format!("{error:#}").contains("rolled back"));
+                for (path, bytes) in &before {
+                    assert_eq!(fs::read(path).unwrap(), *bytes, "{}", path.display());
+                }
+                let mut expected = before.into_iter().map(|(path, _)| path).collect::<Vec<_>>();
+                expected.push(root.join(INSTALL_LOCK));
+                expected.sort();
+                assert_eq!(setup_files_under(dir.path()), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn failed_first_install_removes_its_created_files_and_releases_the_lock() {
+        for name in ["eef", "eefn"] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().join("installation");
+            let blocked = dir.path().join("blocked-menu");
+            fs::write(&blocked, b"owner file").unwrap();
+            let shortcuts = Shortcuts {
+                startup: dir.path().join("startup.cmd"),
+                menu: blocked.join("entry.cmd"),
+            };
+            let payload = setup_fixture_payload(name);
+            let error = install_files(&payload, &root, name, true, &shortcuts, &None).unwrap_err();
+            assert!(format!("{error:#}").contains("Create Start menu entry"));
+            assert_eq!(setup_files_under(&root), vec![root.join(INSTALL_LOCK)]);
+            assert!(!shortcuts.startup.exists());
+            assert_eq!(fs::read(&blocked).unwrap(), b"owner file");
+            let corrected = Shortcuts {
+                menu: dir.path().join("menu/entry.cmd"),
+                ..shortcuts
+            };
+            let (lock, warnings) =
+                install_files(&payload, &root, name, true, &corrected, &None).unwrap();
+            assert!(warnings.is_empty());
+            assert_eq!(
+                fs::read(root.join(product(name).unwrap().executable)).unwrap(),
+                b"new application"
+            );
+            assert!(corrected.startup.is_file());
+            assert!(corrected.menu.is_file());
+            assert!(setup_files_under(dir.path()).iter().all(|path| {
+                !path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(".eef-setup-")
+            }));
+            drop(lock);
+        }
+    }
+
+    #[test]
+    fn late_payload_failure_restores_an_earlier_replaced_executable() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("installation");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("eefn.exe"), b"old app").unwrap();
+        let callback_root = root.clone();
+        let progress: Progress = Some(std::sync::Arc::new(move |percent, _| {
+            // Guards already passed. Introduce an actual filesystem failure
+            // only after the earlier archive entry was published.
+            if percent > 10 && !callback_root.join("blocked").exists() {
+                fs::write(callback_root.join("blocked"), b"concurrent owner file").unwrap();
+            }
+        }));
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("eefn.exe", options).unwrap();
+        writer.write_all(b"new app").unwrap();
+        writer.start_file("blocked/later.dll", options).unwrap();
+        writer.write_all(b"new runtime").unwrap();
+        let payload = writer.finish().unwrap().into_inner();
+        assert!(extract_payload(&payload, &root, "eefn", &progress).is_err());
+        assert_eq!(fs::read(root.join("eefn.exe")).unwrap(), b"old app");
+        assert_eq!(
+            fs::read(root.join("blocked")).unwrap(),
+            b"concurrent owner file"
+        );
+        assert_eq!(setup_files_under(&root).len(), 3);
     }
 
     #[test]

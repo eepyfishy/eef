@@ -60,23 +60,28 @@ keeps those handles until extraction finishes. A file already locked against
 replacement therefore stops setup before earlier files are changed. Existing
 configuration is excluded from this replacement check.
 The existing `.update.lock` serializes setup, updates, rollback and package
-repair for each destination. Setup holds it through configuration, shortcuts
-and launch. A conflicting operation asks the user to wait. The lock file is
+repair for each destination. Setup holds it through configuration, shortcuts,
+commit or rollback, and an optional command-line launch check. The wizard's
+Finish action opens the committed installation separately. A conflicting
+operation asks the user to wait. The lock file is
 retained for reuse and the OS releases the lock when the process exits.
 Setup also reads the existing `bundle.json` before extraction and requires the
 installed role to match. Use separate destination folders for the coordinator
 and node. Older manifests with a UTF-8 BOM and extra metadata remain compatible.
-It then stages and synchronizes each payload file before replacing
-the installed copy. Corrupt payloads fail before any installation write. A refused
-file replacement leaves that file's previous bytes in place. Existing configuration is kept, including a configuration
-created while setup is copying files. Whole-install rollback is a separate gate.
+It stages and synchronizes each payload file before publishing the installed
+copy. Corrupt payloads fail before any installation write. Development setup
+now moves old files into unique backups on their own drive and restores them
+if a later setup step fails. This covers payloads, settings preparation, update
+selection and shortcuts. Existing configuration is kept, including a
+configuration created while setup is copying files. Automatic recovery after
+process termination or power loss remains a separate gate. See
+[EXE setup rollback](EXE-SETUP-ROLLBACK.md) for the exact limits.
 Setup also reports an unsuccessful app exit during its initial launch wait.
 The wizard keeps a failed launch on an explicit recovery page with
 **Retry opening** and **Close**. Retrying opens the installed app again without
 reinstalling files or changing settings. Setup never retries a launch on its own.
 The command-script path checks for shortcuts run before payload extraction.
-Sign-in and Start menu command files use the shared atomic writer, preserving
-the previous shortcut if its replacement fails.
+Sign-in and Start menu command files participate in the same setup transaction.
 
 Pass `-ExpectedSourceCommit` with the full build commit when collecting
 release evidence. The check requires both installed packages to record that
@@ -190,7 +195,8 @@ overlapping the downloaded installer are rejected before Review. Existing
 ancestors are resolved before checking overlap, including Windows canonical
 prefixes and case variants. No installation folder or lock is created by these
 checks. Installation still checks disk space and rechecks the role under the
-setup/update lock before extraction. This does not add whole-install rollback.
+setup/update lock before extraction. Folder checks do not prove rollback or
+crash recovery.
 
 Local validation of this increment passed 39 installer Rust tests, 14 native
 invalid-folder cases, four launch-recovery cases, and both roles' Back/review/

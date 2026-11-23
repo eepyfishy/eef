@@ -222,3 +222,9 @@ jobs:
           # them or claim those omitted suites, successful package repair, model quality,
           # installer/Defender/signing or physical two-PC acceptance.
           exit 0
+      - name: Native EXE setup rollback (synthetic; no release acceptance)
+        if: ${{ !cancelled() && matrix.os == 'windows-2025' && matrix.mode == 'headless' && steps.native_build.outcome == 'success' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tools/test-installer-rollback.ps1 -BinaryDir target/debug -SyntheticCi
