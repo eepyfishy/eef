@@ -129,6 +129,17 @@ and all other stable-release gates remain open.
 
 ## Native integration attempts
 
+The broader hosted run
+[45182291340](https://github.com/eepyfishy/eef/actions/runs/45182291340)
+exposed nine coordinator exchange/application/recovery failures. Their shared
+synthetic model identified initial interpretation by the presence of a schema,
+which now also occurs in method preparation. It returned an interpretation where
+a method was required; the validators refused that wrong response. The fixture
+now identifies the method stage from the reconstructed system message and checks
+the exact schema against the pinned task alongside its messages. This preserves
+the existing completion, recovery, lineage and no-replay assertions. Fresh full
+hosted results remain required.
+
 The first full `test-request-input.mjs` invocation omitted its explicit Python
 dependency and stopped before camera lifecycle checks. A fresh run with the pinned
 Python then exited natively with `0xc0000409` on the installed Node.js `24.15.0`.

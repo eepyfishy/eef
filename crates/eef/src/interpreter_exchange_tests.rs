@@ -95,9 +95,11 @@ impl Fixture {
                         if model.hold.load(Ordering::SeqCst) {
                             model.gate.acquire().await.unwrap().forget();
                         }
+                        let preparing = body["messages"][0]["content"].as_str()
+                            .is_some_and(|s| s.starts_with("Propose one method"));
                         let text = if model.bad.load(Ordering::SeqCst) {
                             "broken model output".into()
-                        } else if body["format"].is_object() {
+                        } else if !preparing {
                             proposal(model.question.load(Ordering::SeqCst)).to_string()
                         } else if model.method.load(Ordering::SeqCst) {
                             json!({"schema_version":1,"method":{"schema_version":1,
@@ -393,7 +395,9 @@ async fn real_core_allowances_exchange_all_three_stages_through_private_grants_w
         assert!(record.report.as_ref().unwrap().success);
         assert_eq!(f.model.calls.load(Ordering::SeqCst), index + 1);
         let request = f.model.requests.lock().unwrap()[index].clone();
-        assert_eq!(request["messages"], task.validate().unwrap().messages);
+        let spec = task.validate().unwrap();
+        assert_eq!(request["messages"], spec.messages);
+        assert_eq!(request.get("format"), spec.output_schema.as_ref());
         assert_eq!(request["options"]["num_predict"], 128);
         let plan = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
         assert!(
