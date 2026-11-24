@@ -250,6 +250,7 @@ fn retain(install: &Path, plan: &Plan) -> Result<()> {
         .open(install.join(".update.lock"))?;
     lock.try_lock_exclusive()
         .context("another update/repair is active")?;
+    crate::setup_state::require_complete(install)?;
     let (mut plans, before) = read_store(install)?;
     if plans.plans.len() >= MAX_PLANS || plans.plans.iter().any(|p| p.id == plan.id) {
         bail!("repair proposal capacity reached or ID already retained")

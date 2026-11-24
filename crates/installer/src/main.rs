@@ -13,9 +13,13 @@ use zip::ZipArchive;
 #[path = "../../../shared/atomic_file.rs"]
 pub mod atomic_file;
 #[path = "../../../shared/coordinator_config.rs"]
+#[allow(dead_code)] // Other consumers use startup helpers; setup uses the pure byte planner.
 mod coordinator_config;
 #[path = "../../../shared/installer_payload.rs"]
 mod installer_payload;
+#[path = "../../../shared/setup_state.rs"]
+#[allow(dead_code)] // Package clients use the guard; setup owns recovery itself.
+mod setup_state;
 mod transaction;
 #[cfg(windows)]
 mod wizard;
@@ -201,20 +205,66 @@ fn read_manifest(payload: &[u8]) -> Result<BundleManifest> {
     bail!("installer payload has no bundle.json")
 }
 
+fn payload_path(name: &str) -> Result<PathBuf> {
+    let normalized = name.replace('\\', "/");
+    let mut relative = PathBuf::new();
+    for component in Path::new(&normalized).components() {
+        let value = match component {
+            std::path::Component::CurDir => continue,
+            std::path::Component::Normal(value) => {
+                value.to_str().context("Invalid installer filename")?
+            }
+            _ => bail!("unsafe path in installer payload"),
+        };
+        anyhow::ensure!(
+            !value.ends_with(['.', ' '])
+                && !value
+                    .chars()
+                    .any(|ch| ch.is_control()
+                        || matches!(ch, ':' | '<' | '>' | '"' | '|' | '?' | '*')),
+            "Unsupported Windows filename in installer payload"
+        );
+        // Windows device names remain reserved even with filename extensions.
+        // https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file
+        let stem = value.split('.').next().unwrap().trim_end_matches(' ');
+        let serial = stem.get(..3).is_some_and(|prefix| {
+            prefix.eq_ignore_ascii_case("COM") || prefix.eq_ignore_ascii_case("LPT")
+        }) && matches!(
+            stem.get(3..),
+            Some("1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+        );
+        anyhow::ensure!(
+            !serial
+                && !["CON", "PRN", "AUX", "NUL"]
+                    .iter()
+                    .any(|reserved| stem.eq_ignore_ascii_case(reserved)),
+            "Reserved Windows device name in installer payload"
+        );
+        relative.push(value);
+    }
+    anyhow::ensure!(
+        !relative.components().next().is_some_and(|part| {
+            let name = part.as_os_str().to_string_lossy();
+            name.eq_ignore_ascii_case(INSTALL_LOCK)
+                || name.eq_ignore_ascii_case(transaction::JOURNAL_NAME)
+        }),
+        "installer payload uses a setup metadata filename"
+    );
+    Ok(relative)
+}
+
 fn verified_unpacked_size(payload: &[u8]) -> Result<u64> {
     let mut archive = ZipArchive::new(Cursor::new(payload))?;
     let mut total = 0_u64;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
-        let relative = entry
+        entry
             .enclosed_name()
             .context("unsafe path in installer payload")?;
+        let relative = payload_path(entry.name())?;
         anyhow::ensure!(
-            !relative.components().next().is_some_and(|part| part
-                .as_os_str()
-                .to_string_lossy()
-                .eq_ignore_ascii_case(INSTALL_LOCK)),
-            "installer payload uses the setup lock filename"
+            !relative.as_os_str().is_empty() || entry.is_dir(),
+            "Empty installer file path"
         );
         let expected = entry.size();
         let actual = std::io::copy(&mut entry, &mut std::io::sink())
@@ -252,9 +302,8 @@ fn product(name: &str) -> Result<&'static Product> {
     }
 }
 
-fn prepare_extraction(payload: &[u8], destination: &Path) -> Result<File> {
+fn prepare_extraction(payload: &[u8], destination: &Path) -> Result<(File, u64)> {
     let required = verified_unpacked_size(payload)?;
-    check_install_space(destination, required)?;
     fs::create_dir_all(destination)?;
     let mut lock_options = fs::OpenOptions::new();
     lock_options
@@ -270,7 +319,7 @@ fn prepare_extraction(payload: &[u8], destination: &Path) -> Result<File> {
     let installation_lock = lock_options.open(destination.join(INSTALL_LOCK))?;
     fs2::FileExt::try_lock_exclusive(&installation_lock)
         .context("Another setup, update or repair is using this folder. Wait for it to finish before retrying")?;
-    Ok(installation_lock)
+    Ok((installation_lock, required))
 }
 
 struct Shortcuts {
@@ -286,14 +335,24 @@ fn install_files(
     shortcuts: &Shortcuts,
     progress: &Progress,
 ) -> Result<(File, Vec<String>)> {
-    let lock = prepare_extraction(payload, destination)?;
-    let mut transaction = transaction::Transaction::new();
+    let (lock, required) = prepare_extraction(payload, destination)?;
+    let external = [shortcuts.startup.as_path(), shortcuts.menu.as_path()];
+    if transaction::recover_pending(destination, name, &external)? {
+        if let Some(report) = progress {
+            report(4, "Recovered the previous setup operation…");
+        }
+    }
+    check_install_space(destination, required)?;
+    let mut transaction = transaction::Transaction::persistent(destination, name, &external)?;
     let result = (|| {
         apply_payload(payload, destination, name, progress, &mut transaction)?;
         let product = product(name)?;
         if name == "eef" {
             transaction
-                .edit(&destination.join(product.config), ensure_coordinator_secret)
+                .edit(
+                    &destination.join(product.config),
+                    coordinator_config::installer_bytes,
+                )
                 .context("Prepare coordinator settings")?;
         }
         select_manual_install(destination, &mut transaction)?;
@@ -333,10 +392,7 @@ fn apply_payload(
             );
         }
         let mut entry = archive.by_index(index)?;
-        let relative = entry
-            .enclosed_name()
-            .context("unsafe path in installer payload")?
-            .to_path_buf();
+        let relative = payload_path(entry.name())?;
         if relative.as_os_str().is_empty() {
             continue;
         }
@@ -422,7 +478,15 @@ fn validate_install_destination(executable: &Path, destination: &Path, name: &st
             Err(error) => return Err(error).context("Cannot inspect the installation folder"),
         }
     }
-    validate_installation_role(&destination, name)
+    if let Some(pending) = transaction::pending_role(&destination)? {
+        anyhow::ensure!(
+            pending == name,
+            "Use the matching role's installer to recover this setup"
+        );
+        Ok(())
+    } else {
+        validate_installation_role(&destination, name)
+    }
 }
 
 fn replacement_guards(payload: &[u8], destination: &Path, product: &str) -> Result<Vec<File>> {
@@ -430,9 +494,7 @@ fn replacement_guards(payload: &[u8], destination: &Path, product: &str) -> Resu
     let mut guards = Vec::new();
     for index in 0..archive.len() {
         let entry = archive.by_index(index)?;
-        let relative = entry
-            .enclosed_name()
-            .context("unsafe path in installer payload")?;
+        let relative = payload_path(entry.name())?;
         if entry.is_dir() || should_preserve_config(product, &relative) {
             continue;
         }
@@ -460,7 +522,10 @@ fn replacement_guards(payload: &[u8], destination: &Path, product: &str) -> Resu
 
 fn should_preserve_config(product: &str, relative: &Path) -> bool {
     let normalized = relative.to_string_lossy().replace('\\', "/");
-    (product == "eef" && normalized.starts_with("config/"))
+    (product == "eef"
+        && normalized
+            .get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("config/")))
         || (product == "eefn" && normalized.eq_ignore_ascii_case("config.json"))
 }
 
@@ -490,6 +555,7 @@ fn select_manual_install(
     Ok(())
 }
 
+#[cfg(test)]
 fn ensure_coordinator_secret(path: &Path) -> Result<()> {
     coordinator_config::initialize(path)?;
     coordinator_config::ensure_secret_file(path)
@@ -754,7 +820,8 @@ mod tests {
         product: &str,
         progress: &Progress,
     ) -> Result<File> {
-        let lock = prepare_extraction(payload, destination)?;
+        let (lock, required) = prepare_extraction(payload, destination)?;
+        check_install_space(destination, required)?;
         let mut transaction = transaction::Transaction::new();
         let result = apply_payload(payload, destination, product, progress, &mut transaction);
         assert!(transaction.finish(result)?.is_empty());
@@ -967,6 +1034,273 @@ mod tests {
         assert_eq!(setup_files_under(&root).len(), 3);
     }
 
+    // This fixture is compiled only into the Rust test executable. Shipping
+    // installers contain no environment-controlled halt or fault-injection hook.
+    #[test]
+    fn setup_process_crash_child() {
+        if std::env::var("EEF_SETUP_TEST_CHILD").as_deref() != Ok("1") {
+            return;
+        }
+        let root = PathBuf::from(std::env::var_os("EEF_SETUP_TEST_ROOT").unwrap());
+        let name = std::env::var("EEF_SETUP_TEST_ROLE").unwrap();
+        let menu = PathBuf::from(std::env::var_os("EEF_SETUP_TEST_MENU").unwrap());
+        let shortcuts = Shortcuts {
+            startup: root.parent().unwrap().join("startup.cmd"),
+            menu,
+        };
+        let result = install_files(
+            &setup_fixture_payload(&name),
+            &root,
+            &name,
+            true,
+            &shortcuts,
+            &None,
+        );
+        panic!("Crash fixture did not reach the requested checkpoint: {result:?}");
+    }
+
+    #[test]
+    fn killed_setup_recovers_original_files_or_keeps_an_already_committed_installation() {
+        struct OwnedChild(std::process::Child);
+        impl Drop for OwnedChild {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        for name in ["eef", "eefn"] {
+            for checkpoint in [
+                "staging:1",
+                "written:1",
+                "prepared:1",
+                "moved:1",
+                "published:1",
+                "committed:0",
+                "cleaned:0",
+                "undone:1",
+            ] {
+                let dir = tempfile::tempdir().unwrap();
+                let root = dir.path().join("installation");
+                let product = product(name).unwrap();
+                fs::create_dir_all(root.join(product.config).parent().unwrap()).unwrap();
+                fs::write(root.join(product.executable), b"old application").unwrap();
+                fs::write(
+                    root.join("bundle.json"),
+                    serde_json::to_vec(&serde_json::json!({"name":name,"version":"old"})).unwrap(),
+                )
+                .unwrap();
+                let settings: &[u8] = if name == "eef" {
+                    b"# owner\nnode:\n  psk: ''\nfuture: keep\n"
+                } else {
+                    b"{\"owner\":true}"
+                };
+                fs::write(root.join(product.config), settings).unwrap();
+                fs::write(root.join("current.txt"), b"old-version\n").unwrap();
+                fs::write(root.join("owner.data"), b"owner data").unwrap();
+                let startup = dir.path().join("startup.cmd");
+                fs::write(&startup, b"old startup").unwrap();
+                let menu = if checkpoint == "undone:1" {
+                    let blocker = dir.path().join("blocked-menu");
+                    fs::write(&blocker, b"owner menu blocker").unwrap();
+                    blocker.join("entry.cmd")
+                } else {
+                    dir.path().join("menu.cmd")
+                };
+                if checkpoint != "undone:1" {
+                    fs::write(&menu, b"old menu").unwrap();
+                }
+                let before = setup_files_under(dir.path())
+                    .into_iter()
+                    .map(|path| {
+                        let bytes = fs::read(&path).unwrap();
+                        (path, bytes)
+                    })
+                    .collect::<Vec<_>>();
+                let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                command
+                    .args(["--exact", "tests::setup_process_crash_child", "--nocapture"])
+                    .env("EEF_SETUP_TEST_CHILD", "1")
+                    .env("EEF_SETUP_TEST_ROOT", &root)
+                    .env("EEF_SETUP_TEST_ROLE", name)
+                    .env("EEF_SETUP_TEST_MENU", &menu)
+                    .env("EEF_SETUP_TEST_HALT", checkpoint)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::piped());
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    command.creation_flags(0x0800_0000);
+                }
+                let mut child = OwnedChild(command.spawn().unwrap());
+                let marker = root.join(".setup-test-ready");
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+                while !marker.is_file() {
+                    if let Some(status) = child.0.try_wait().unwrap() {
+                        let mut errors = String::new();
+                        if let Some(mut stderr) = child.0.stderr.take() {
+                            stderr.read_to_string(&mut errors).unwrap();
+                        }
+                        panic!("{name} {checkpoint} exited before checkpoint ({status}): {errors}");
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "{name} {checkpoint} did not reach its checkpoint"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                assert_eq!(fs::read_to_string(&marker).unwrap(), checkpoint);
+                child.0.kill().unwrap();
+                child.0.wait().unwrap();
+                fs::remove_file(marker).unwrap();
+                let downloads = dir.path().join("downloads");
+                fs::create_dir(&downloads).unwrap();
+                let journal_before = fs::read(root.join(transaction::JOURNAL_NAME)).unwrap();
+                validate_install_destination(&downloads.join("setup.exe"), &root, name).unwrap();
+                assert_eq!(
+                    fs::read(root.join(transaction::JOURNAL_NAME)).unwrap(),
+                    journal_before
+                );
+                if matches!(checkpoint, "moved:1" | "cleaned:0") {
+                    let recovered = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let observed = recovered.clone();
+                    let callback_root = root.clone();
+                    let progress: Progress = Some(std::sync::Arc::new(move |percent, _| {
+                        if percent == 4 {
+                            let expected: &[u8] = if checkpoint == "cleaned:0" {
+                                b"new application"
+                            } else {
+                                b"old application"
+                            };
+                            assert_eq!(
+                                fs::read(callback_root.join(product.executable)).unwrap(),
+                                expected
+                            );
+                            assert!(!callback_root.join(transaction::JOURNAL_NAME).exists());
+                            let competing = fs::OpenOptions::new()
+                                .read(true)
+                                .write(true)
+                                .open(callback_root.join(INSTALL_LOCK))
+                                .unwrap();
+                            assert!(fs2::FileExt::try_lock_exclusive(&competing).is_err());
+                            observed.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }));
+                    let shortcuts = Shortcuts { startup, menu };
+                    let (retry_lock, warnings) = install_files(
+                        &setup_fixture_payload(name),
+                        &root,
+                        name,
+                        true,
+                        &shortcuts,
+                        &progress,
+                    )
+                    .unwrap();
+                    assert!(recovered.load(std::sync::atomic::Ordering::SeqCst));
+                    assert!(warnings.is_empty());
+                    assert_eq!(
+                        fs::read(root.join(product.executable)).unwrap(),
+                        b"new application"
+                    );
+                    assert_eq!(fs::read(root.join("owner.data")).unwrap(), b"owner data");
+                    assert!(!root.join(transaction::JOURNAL_NAME).exists());
+                    assert!(setup_files_under(dir.path()).iter().all(|path| {
+                        !path
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with(".eef-setup-")
+                    }));
+                    drop(retry_lock);
+                    continue;
+                }
+                let lock = fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(root.join(INSTALL_LOCK))
+                    .unwrap();
+                fs2::FileExt::try_lock_exclusive(&lock).unwrap();
+                assert!(
+                    transaction::recover_pending(&root, name, &[&startup, &menu]).unwrap(),
+                    "{name} {checkpoint}"
+                );
+                assert!(!root.join(transaction::JOURNAL_NAME).exists());
+                if matches!(checkpoint, "committed:0" | "cleaned:0") {
+                    assert_eq!(
+                        fs::read(root.join(product.executable)).unwrap(),
+                        b"new application"
+                    );
+                    assert!(root.join("runtime/new.dll").is_file());
+                    assert!(!root.join("current.txt").exists());
+                    assert_ne!(fs::read(&startup).unwrap(), b"old startup");
+                    assert_ne!(fs::read(&menu).unwrap(), b"old menu");
+                    assert_eq!(fs::read(root.join("owner.data")).unwrap(), b"owner data");
+                    assert_eq!(
+                        fs::read_dir(&root)
+                            .unwrap()
+                            .filter_map(|entry| entry.ok())
+                            .filter(|entry| entry
+                                .file_name()
+                                .to_string_lossy()
+                                .starts_with("current.before-manual-install-"))
+                            .count(),
+                        1
+                    );
+                } else {
+                    for (path, bytes) in &before {
+                        assert_eq!(
+                            fs::read(path).unwrap(),
+                            *bytes,
+                            "{name} {checkpoint}: {}",
+                            path.display()
+                        );
+                    }
+                    let mut expected = before
+                        .iter()
+                        .map(|(path, _)| path.clone())
+                        .collect::<Vec<_>>();
+                    expected.push(root.join(INSTALL_LOCK));
+                    expected.sort();
+                    assert_eq!(
+                        setup_files_under(dir.path()),
+                        expected,
+                        "{name} {checkpoint}"
+                    );
+                }
+                assert!(setup_files_under(dir.path()).iter().all(|path| {
+                    !path
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with(".eef-setup-")
+                }));
+                assert!(!transaction::recover_pending(&root, name, &[&startup, &menu]).unwrap());
+                drop(lock);
+                if checkpoint == "undone:1" {
+                    let blocker = menu.parent().unwrap();
+                    fs::rename(blocker, blocker.with_extension("owner-copy")).unwrap();
+                }
+                let shortcuts = Shortcuts { startup, menu };
+                let (retry_lock, warnings) = install_files(
+                    &setup_fixture_payload(name),
+                    &root,
+                    name,
+                    true,
+                    &shortcuts,
+                    &None,
+                )
+                .unwrap();
+                assert!(warnings.is_empty());
+                assert_eq!(
+                    fs::read(root.join(product.executable)).unwrap(),
+                    b"new application"
+                );
+                assert!(!root.join(transaction::JOURNAL_NAME).exists());
+                assert!(shortcuts.startup.is_file() && shortcuts.menu.is_file());
+                drop(retry_lock);
+            }
+        }
+    }
+
     #[test]
     fn corrupt_later_entry_is_refused_before_any_installation_write() {
         let dir = tempfile::tempdir().unwrap();
@@ -1111,10 +1445,84 @@ mod tests {
     fn payload_cannot_replace_the_installer_lock() {
         let dir = tempfile::tempdir().unwrap();
         let destination = dir.path().join("fresh");
-        for name in [INSTALL_LOCK, ".update.lock/child"] {
+        for name in [
+            INSTALL_LOCK,
+            ".update.lock/child",
+            transaction::JOURNAL_NAME,
+            ".setup-transaction/child",
+            ".SETUP-TRANSACTION",
+            "./.update.lock",
+            ".\\.update.lock",
+            "./.setup-transaction",
+            ".\\.SETUP-TRANSACTION",
+        ] {
             let payload = zip_payload(name, b"invalid payload entry");
             assert!(extract_payload(&payload, &destination, "eefn", &None).is_err());
             assert!(!destination.exists());
+        }
+    }
+
+    #[test]
+    fn normalized_payload_names_preserve_owner_settings_for_both_roles() {
+        for name in ["eef", "eefn"] {
+            let dir = tempfile::tempdir().unwrap();
+            let config = product(name).unwrap().config;
+            let destination = dir.path().join(config);
+            fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            fs::write(&destination, b"owner settings").unwrap();
+            let payload = zip_payload(&format!("./{config}"), b"bundled defaults");
+            extract_payload(&payload, dir.path(), name, &None).unwrap();
+            assert_eq!(fs::read(&destination).unwrap(), b"owner settings");
+            assert_eq!(setup_files_under(dir.path()).len(), 2);
+        }
+        assert_eq!(
+            payload_path("./packages/เสียง.py").unwrap(),
+            Path::new("packages/เสียง.py")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn case_variant_config_directory_never_replaces_owner_coordinator_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config/default_identity.yaml");
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(&config, b"owner settings with existing authority").unwrap();
+        let payload = zip_payload("CONFIG/default_identity.yaml", b"bundled defaults");
+        extract_payload(&payload, dir.path(), "eef", &None).unwrap();
+        assert_eq!(
+            fs::read(&config).unwrap(),
+            b"owner settings with existing authority"
+        );
+        assert_eq!(setup_files_under(dir.path()).len(), 2);
+    }
+
+    #[test]
+    fn unsafe_windows_payload_names_fail_before_installation_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "../owner",
+            "folder/../owner",
+            "file:stream",
+            "folder./file",
+            "folder /file",
+            "NUL",
+            "NUL.txt",
+            "nested/com1.dll",
+            "nested/LPT².txt",
+            "C:/owner",
+            "\\\\server\\share\\owner",
+            "file?name",
+            ".update.lock.",
+            ".setup-transaction ",
+        ] {
+            let destination = dir.path().join("fresh");
+            let payload = zip_payload(name, b"invalid payload");
+            assert!(
+                extract_payload(&payload, &destination, "eefn", &None).is_err(),
+                "{name}"
+            );
+            assert!(!destination.exists(), "{name}");
         }
     }
 

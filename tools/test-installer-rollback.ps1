@@ -10,6 +10,7 @@ $stub = Join-Path $binary 'eef-installer-stub.exe'
 $fixture = Join-Path $binary 'examples/installer_launch_fixture.exe'
 $scratch = Join-Path $workspace ('.validation\installer-rollback-' + [guid]::NewGuid().ToString('N'))
 $downloads = Join-Path $scratch 'downloads'
+$appDataScratch = Join-Path ([IO.Path]::GetTempPath()) ('eef-installer-rollback-appdata-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $downloads | Out-Null
 $savedAppData = $env:APPDATA
 $savedErrorLog = $env:EEF_INSTALLER_ERROR_LOG
@@ -69,6 +70,11 @@ function Get-FixtureSnapshot([string[]]$Roots) {
 }
 
 try {
+    $stubText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($stub))
+    foreach ($hook in @('EEF_SETUP_TEST_CHILD','EEF_SETUP_TEST_HALT','.setup-test-ready')) {
+        if ($stubText.Contains($hook)) { throw 'The normal installer contains a test-only interruption hook' }
+    }
+    $stubText = $null
     $stubHash = (Get-FileHash -LiteralPath $stub -Algorithm SHA256).Hash
     $fixtureHash = (Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash
     foreach ($name in @('eef','eefn')) {
@@ -81,7 +87,7 @@ try {
         foreach ($mode in @('upgrade-startup-on','upgrade-startup-off','fresh')) {
             $caseDir = Join-Path $scratch "$name-$mode"
             $destination = Join-Path $caseDir 'installation'
-            $env:APPDATA = Join-Path $caseDir 'appdata'
+            $env:APPDATA = Join-Path $appDataScratch "$name-$mode"
             $programs = Join-Path $env:APPDATA 'Microsoft/Windows/Start Menu/Programs'
             New-Item -ItemType Directory -Path $programs -Force | Out-Null
             $menuBlocker = Join-Path $programs 'eef'
@@ -127,14 +133,15 @@ try {
                 if ($selections.Count -ne 1 -or [IO.File]::ReadAllText($selections[0].FullName) -cne "old-version`n") { throw 'Retry did not preserve the old update selection' }
                 if ([IO.File]::ReadAllText((Join-Path $destination 'owner.data')) -cne 'owner data') { throw 'Retry changed owner data' }
             }
-            $results += @{role=$name;mode=$mode;late_start_menu_failure=$true;prior_files_restored=$true;retry_passed=$true;startup=$startupEnabled;apps_launched=$false}
+            $results += @{role=$name;mode=$mode;late_start_menu_failure=$true;prior_files_restored=$true;retry_passed=$true;startup=$startupEnabled;apps_launched=$false;
+                install_drive=[IO.Path]::GetPathRoot($destination);appdata_drive=[IO.Path]::GetPathRoot($env:APPDATA)}
         }
         if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant() -cne $installerHashes[$name]) { throw 'Fixture installer changed during validation' }
     }
     if ((Get-FileHash -LiteralPath $stub -Algorithm SHA256).Hash -cne $stubHash -or
         (Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash -cne $fixtureHash) { throw 'Source binaries changed during validation' }
     @{passed=$true;synthetic_payloads=$true;installer_stub_sha256=$stubHash.ToLowerInvariant();launcher_fixture_sha256=$fixtureHash.ToLowerInvariant();
-        installer_sha256=$installerHashes;cases=$results;defender_scanned=(-not [bool]$SyntheticCi);process_crash_recovery_verified=$false;full_release_acceptance=$false} |
+        installer_sha256=$installerHashes;cases=$results;isolated_appdata=$appDataScratch;normal_binary_test_hooks_absent=$true;defender_scanned=(-not [bool]$SyntheticCi);process_crash_recovery_verified=$false;full_release_acceptance=$false} |
         ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $scratch 'results.json') -Encoding UTF8
     Write-Host "Native installer rollback validation passed. Evidence: $scratch"
 } catch {

@@ -540,6 +540,7 @@ async fn install_request<G>(
         .write(true)
         .open(install.join(".update.lock"))?;
     fs2::FileExt::try_lock_exclusive(&lock).context("another update or repair is in progress")?;
+    crate::setup_state::require_complete(&install)?;
     let selected = updater::installed_version(&install)?;
     if selected.as_deref().is_some_and(|v| v != current_version)
         || bundle_selection::pending_executable(
@@ -1211,6 +1212,25 @@ mod tests {
             .contains("in progress")
         );
         drop(lock);
+        let journal = root.join(crate::setup_state::JOURNAL_NAME);
+        fs::write(&journal, b"pending setup fixture").unwrap();
+        let refusal = install_verified(
+            &manifest,
+            &request_id,
+            root,
+            VERSION,
+            &executable,
+            "eefn",
+            Duration::from_secs(1),
+            false,
+            || Ok(()),
+        )
+        .await
+        .unwrap_err();
+        assert!(refusal.to_string().contains("matching installer"));
+        assert!(bundle_selection::read(root, VERSION).unwrap().is_none());
+        assert_eq!(fs::read(&journal).unwrap(), b"pending setup fixture");
+        fs::remove_file(journal).unwrap();
         fs::write(root.join("current.txt"), "0.5.0").unwrap();
         assert!(
             install_verified(

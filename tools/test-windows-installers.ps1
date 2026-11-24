@@ -2,6 +2,7 @@
 param(
     [Parameter(Mandatory)][string]$ReleaseDir,
     [string]$PreviousReleaseDir,
+    [string]$ScratchBase,
     [ValidatePattern('^[0-9a-f]{40}$')][string]$ExpectedSourceCommit
 )
 
@@ -10,7 +11,9 @@ $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $release = (Resolve-Path -LiteralPath $ReleaseDir).Path
 $previousRelease = if ($PreviousReleaseDir) { (Resolve-Path -LiteralPath $PreviousReleaseDir).Path }
 if ($previousRelease -eq $release) { throw 'Choose a separate prior release directory for the upgrade check' }
-$scratch = Join-Path $workspace ('.validation\install-test-' + [guid]::NewGuid().ToString('N'))
+$base = if ($ScratchBase) { (Resolve-Path -LiteralPath $ScratchBase).Path } else { Join-Path $workspace '.validation' }
+if ($ScratchBase -and -not (Test-Path -LiteralPath $base -PathType Container)) { throw 'ScratchBase must be an existing directory' }
+$scratch = Join-Path $base ('install-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $savedAppData = $env:APPDATA
 $savedErrorLog = $env:EEF_INSTALLER_ERROR_LOG

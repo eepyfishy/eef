@@ -69,18 +69,45 @@ pub fn ensure_secret_file(path: &Path) -> Result<()> {
     if !existing(path)? {
         bail!("Coordinator template is missing; no existing settings were replaced");
     }
-    let mut value: Value = serde_yml::from_slice(&std::fs::read(path)?).map_err(|_| {
-        anyhow::anyhow!("Coordinator settings are invalid; existing bytes were preserved")
-    })?;
-    if prepare_secret(&mut value)? {
-        crate::atomic_file::write(path, serde_yml::to_string(&value)?.as_bytes())?;
+    if let Some(bytes) = installer_bytes(Some(&std::fs::read(path)?))? {
+        crate::atomic_file::write(path, &bytes)?;
     }
     Ok(())
+}
+
+/// Pure preparation lets setup own publication and interruption recovery.
+pub fn installer_bytes(existing: Option<&[u8]>) -> Result<Option<Vec<u8>>> {
+    let mut value: Value =
+        serde_yml::from_slice(existing.unwrap_or(DEFAULTS.as_bytes())).map_err(|_| {
+            anyhow::anyhow!("Coordinator settings are invalid; existing bytes were preserved")
+        })?;
+    let changed = prepare_secret(&mut value)?;
+    if changed || existing.is_none() {
+        Ok(Some(serde_yml::to_string(&value)?.into_bytes()))
+    } else {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installer_preparation_is_pure_and_preserves_existing_valid_formatting() {
+        let valid = b"# owner formatting\nnode:\n  psk: existing-valid-secret\nfuture: keep\n";
+        assert!(installer_bytes(Some(valid)).unwrap().is_none());
+        assert!(installer_bytes(Some(b"[invalid YAML")).is_err());
+        let placeholder = b"# owner\nnode:\n  psk: ''\nfuture: keep\n";
+        let prepared = installer_bytes(Some(placeholder)).unwrap().unwrap();
+        let value: Value = serde_yml::from_slice(&prepared).unwrap();
+        assert_eq!(value["future"], "keep");
+        assert_eq!(value["node"]["psk"].as_str().unwrap().len(), 64);
+        let first: Value = serde_yml::from_slice(&installer_bytes(None).unwrap().unwrap()).unwrap();
+        let second: Value =
+            serde_yml::from_slice(&installer_bytes(None).unwrap().unwrap()).unwrap();
+        assert_ne!(first["node"]["psk"], second["node"]["psk"]);
+    }
     #[test]
     fn concurrent_first_initializers_retain_one_complete_configuration() {
         let dir = tempfile::tempdir().unwrap();

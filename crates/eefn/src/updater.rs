@@ -379,6 +379,7 @@ async fn install_manifest<G>(
         .write(true)
         .open(install.join(".update.lock"))?;
     fs2::FileExt::try_lock_exclusive(&lock).context("another update is in progress")?;
+    crate::setup_state::require_complete(&install)?;
     let selected = installed_version(&install)?;
     if let Some(version) = selected.as_deref() {
         if crate::bundle_selection::read(&install, version)?.is_some()
@@ -475,6 +476,7 @@ pub fn rollback_for(install_dir: impl AsRef<Path>, program: &str) -> Result<Stri
         .write(true)
         .open(install.join(".update.lock"))?;
     fs2::FileExt::try_lock_exclusive(&lock).context("another update is in progress")?;
+    crate::setup_state::require_complete(&install)?;
     if let Some(version) = installed_version(&install)? {
         if let Some(mut selection) = crate::bundle_selection::read(&install, &version)? {
             if let Some(previous) = selection.previous_slot.take() {
@@ -1139,6 +1141,24 @@ mod tests {
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
+    #[test]
+    fn pending_setup_blocks_rollback_before_reading_or_replacing_selectors() {
+        for program in ["eef", "eefn"] {
+            let dir = tempfile::tempdir().unwrap();
+            let journal = dir.path().join(crate::setup_state::JOURNAL_NAME);
+            fs::write(&journal, b"pending setup fixture").unwrap();
+            fs::write(dir.path().join("current.txt"), b"owner selector bytes").unwrap();
+            let error = rollback_for(dir.path(), program).unwrap_err();
+            assert!(error.to_string().contains("matching installer"));
+            assert_eq!(
+                fs::read(dir.path().join("current.txt")).unwrap(),
+                b"owner selector bytes"
+            );
+            assert_eq!(fs::read(&journal).unwrap(), b"pending setup fixture");
+            assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 3);
+        }
+    }
+
     #[tokio::test]
     async fn explicit_install_core_checks_artifact_authority_lock_and_preserves_feed() {
         use std::io::Write;
@@ -1268,6 +1288,23 @@ mod tests {
                 .contains("in progress")
             );
             drop(lock);
+            let journal = dir.path().join(crate::setup_state::JOURNAL_NAME);
+            fs::write(&journal, b"pending setup fixture").unwrap();
+            let refusal = install_manifest(
+                &manifest,
+                dir.path(),
+                Duration::from_secs(1),
+                program,
+                current,
+                false,
+                || Ok(()),
+            )
+            .await
+            .unwrap_err();
+            assert!(refusal.to_string().contains("matching installer"));
+            assert_unchanged();
+            assert_eq!(fs::read(&journal).unwrap(), b"pending setup fixture");
+            fs::remove_file(journal).unwrap();
             let applied = install_manifest(
                 &manifest,
                 dir.path(),

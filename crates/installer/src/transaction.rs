@@ -1,33 +1,144 @@
 //! Roll back ordinary setup errors without copying installed runtimes.
-//! This is not automatic recovery after process termination or power loss.
+//! Journaled setup recovery. Directory durability after power loss is separate.
 use anyhow::{Context, Result, bail, ensure};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+#[path = "setup_journal.rs"]
+mod journal;
+pub const JOURNAL_NAME: &str = crate::setup_state::JOURNAL_NAME;
 
-#[derive(Debug)]
+pub fn pending_role(root: &Path) -> Result<Option<String>> {
+    journal::pending_role(root)
+}
+
+pub fn recover_pending(root: &Path, role: &str, external: &[&Path]) -> Result<bool> {
+    let Some(loaded) = journal::Journal::load(root, role, external)? else {
+        return Ok(false);
+    };
+    let mut transaction = Transaction {
+        changes: loaded.changes,
+        stages: loaded.stages,
+        finished: loaded.committed,
+        journal: Some(loaded.journal),
+        verified_volumes: Vec::new(),
+    };
+    if loaded.committed {
+        let warnings = transaction.cleanup_committed();
+        ensure!(
+            warnings.is_empty(),
+            "Previous setup completed, but recovery backup cleanup needs attention:\n{}",
+            warnings.join("\n")
+        );
+    } else {
+        transaction.rollback()?;
+    }
+    Ok(true)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileId {
+    volume: u64,
+    identifier: [u8; 16],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Fingerprint {
+    digest: [u8; 32],
+    identity: FileId,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Stage {
+    path: PathBuf,
+    identity: FileId,
+}
+
+#[cfg(windows)]
+fn file_id(file: &File) -> Result<FileId> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+    };
+    let mut info: FILE_ID_INFO = unsafe { std::mem::zeroed() };
+    ensure!(
+        unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileIdInfo,
+                (&mut info as *mut FILE_ID_INFO).cast(),
+                std::mem::size_of::<FILE_ID_INFO>() as u32,
+            )
+        } != 0,
+        "Cannot read a stable setup file identity: {}",
+        io::Error::last_os_error()
+    );
+    ensure!(
+        info.FileId.Identifier.iter().any(|byte| *byte != 0),
+        "The filesystem did not supply a setup file identity"
+    );
+    Ok(FileId {
+        volume: info.VolumeSerialNumber,
+        identifier: info.FileId.Identifier,
+    })
+}
+
+#[cfg(unix)]
+fn file_id(file: &File) -> Result<FileId> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = file.metadata()?;
+    let mut identifier = [0_u8; 16];
+    identifier[..8].copy_from_slice(&metadata.ino().to_le_bytes());
+    Ok(FileId {
+        volume: metadata.dev(),
+        identifier,
+    })
+}
+
+#[cfg(not(any(windows, unix)))]
+fn file_id(_file: &File) -> Result<FileId> {
+    bail!("This platform does not supply setup file identities")
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Original {
     backup: PathBuf,
     digest: [u8; 32],
     moved: bool,
+    identity: FileId,
+    reserved_identity: FileId,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Change {
     path: PathBuf,
     original: Option<Original>,
     after: Option<[u8; 32]>,
     applied: bool,
+    after_identity: Option<FileId>,
+    reverted: bool,
+    cleaned: bool,
+    #[serde(skip)]
+    logged: bool,
+    stage: Option<usize>,
 }
 
 #[derive(Debug)]
 pub struct Transaction {
     changes: Vec<Change>,
     finished: bool,
+    journal: Option<journal::Journal>,
+    stages: Vec<Stage>,
+    verified_volumes: Vec<u64>,
 }
 
-fn digest(path: &Path) -> Result<[u8; 32]> {
+fn fingerprint(path: &Path) -> Result<Fingerprint> {
     let metadata = fs::symlink_metadata(path)?;
     ensure!(
         metadata.file_type().is_file(),
@@ -35,6 +146,7 @@ fn digest(path: &Path) -> Result<[u8; 32]> {
         path.display()
     );
     let mut input = File::open(path)?;
+    let identity = file_id(&input)?;
     let mut hash = Sha256::new();
     let mut buffer = [0_u8; 65536];
     loop {
@@ -44,7 +156,37 @@ fn digest(path: &Path) -> Result<[u8; 32]> {
         }
         hash.update(&buffer[..count]);
     }
-    Ok(hash.finalize().into())
+    Ok(Fingerprint {
+        digest: hash.finalize().into(),
+        identity,
+    })
+}
+
+fn digest(path: &Path) -> Result<[u8; 32]> {
+    Ok(fingerprint(path)?.digest)
+}
+
+fn observed_file(path: &Path) -> Result<Option<Fingerprint>> {
+    match fingerprint(path) {
+        Ok(value) => Ok(Some(value)),
+        Err(error)
+            if error
+                .downcast_ref::<io::Error>()
+                .is_some_and(|error| error.kind() == io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn backup_prefix(path: &Path) -> Result<String> {
+    let name = path
+        .file_name()
+        .context("Missing setup filename")?
+        .to_string_lossy();
+    let hash = hex::encode(Sha256::digest(name.as_bytes()));
+    Ok(format!(".eef-setup-{}-", &hash[..24]))
 }
 
 fn observed(path: &Path) -> Result<Option<[u8; 32]>> {
@@ -62,10 +204,50 @@ fn observed(path: &Path) -> Result<Option<[u8; 32]>> {
 }
 
 impl Transaction {
+    #[cfg(test)]
     pub fn new() -> Self {
         Self {
             changes: Vec::new(),
             finished: false,
+            journal: None,
+            stages: Vec::new(),
+            verified_volumes: Vec::new(),
+        }
+    }
+
+    pub fn persistent(root: &Path, role: &str, external: &[&Path]) -> Result<Self> {
+        Ok(Self {
+            changes: Vec::new(),
+            stages: Vec::new(),
+            finished: false,
+            journal: Some(journal::Journal::create(root, role, external)?),
+            verified_volumes: Vec::new(),
+        })
+    }
+
+    fn record(&mut self, record: journal::Record) -> Result<()> {
+        if let Some(journal) = &mut self.journal {
+            journal.append(&record)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn checkpoint(&self, phase: &str, index: usize) {
+        if std::env::var("EEF_SETUP_TEST_CHILD").as_deref() != Ok("1")
+            || std::env::var("EEF_SETUP_TEST_HALT").as_deref()
+                != Ok(format!("{phase}:{index}").as_str())
+        {
+            return;
+        }
+        let journal = self
+            .journal
+            .as_ref()
+            .expect("Crash fixture needs a persistent transaction");
+        let marker = journal.header.root.join(".setup-test-ready");
+        crate::atomic_file::write(&marker, format!("{phase}:{index}").as_bytes()).unwrap();
+        loop {
+            std::thread::park_timeout(std::time::Duration::from_millis(100));
         }
     }
 
@@ -74,7 +256,14 @@ impl Transaction {
         path: &Path,
         before: Option<[u8; 32]>,
         after: Option<[u8; 32]>,
+        after_identity: Option<FileId>,
+        stage: Option<usize>,
     ) -> Result<usize> {
+        let canonical = journal::location(path)?;
+        let path = canonical.as_path();
+        if let Some(journal) = &self.journal {
+            journal.check_path(path)?;
+        }
         let current = observed(path)?;
         if before.is_none() && current.is_some() {
             return Err(io::Error::from(io::ErrorKind::AlreadyExists).into());
@@ -85,6 +274,11 @@ impl Transaction {
             path.display()
         );
         let original = if let Some(digest) = before {
+            let original_file = fingerprint(path)?;
+            ensure!(
+                original_file.digest == digest,
+                "The original file changed while setup checked it"
+            );
             ensure!(
                 !fs::metadata(path)?.permissions().readonly(),
                 "This file is read-only: {}",
@@ -92,23 +286,21 @@ impl Transaction {
             );
             // Reserve an owned, unique same-directory name before moving the old
             // file. Keeping the TempPath prevents Drop deleting recovery bytes.
-            let prefix = format!(
-                ".eef-setup-{}-",
-                path.file_name()
-                    .context("Missing setup filename")?
-                    .to_string_lossy()
-            );
+            let prefix = backup_prefix(path)?;
             let pending = tempfile::Builder::new()
                 .prefix(&prefix)
                 .suffix(".backup")
                 .tempfile_in(path.parent().context("Missing setup parent")?)?;
             let (file, backup) = pending.into_parts();
+            let reserved_identity = file_id(&file)?;
             drop(file);
             let backup = backup.keep().map_err(|error| error.error)?;
             Some(Original {
                 backup,
                 digest,
                 moved: false,
+                identity: original_file.identity,
+                reserved_identity,
             })
         } else {
             None
@@ -119,12 +311,26 @@ impl Transaction {
             original,
             after,
             applied: false,
+            after_identity,
+            reverted: false,
+            cleaned: false,
+            logged: false,
+            stage,
         });
+        self.record(journal::Record::Prepared {
+            index,
+            change: self.changes[index].clone(),
+        })?;
+        self.changes[index].logged = true;
+        #[cfg(test)]
+        self.checkpoint("prepared", index);
         if let Some(original) = &mut self.changes[index].original {
             fs::rename(path, &original.backup)
                 .with_context(|| format!("Preserve previous file: {}", path.display()))?;
             original.moved = true;
         }
+        #[cfg(test)]
+        self.checkpoint("moved", index);
         Ok(index)
     }
 
@@ -133,8 +339,10 @@ impl Transaction {
         path: &Path,
         pending: tempfile::TempPath,
         before: Option<[u8; 32]>,
+        stage: usize,
     ) -> Result<()> {
-        let after = digest(&pending)?;
+        let staged = fingerprint(&pending)?;
+        let after = staged.digest;
         if before == Some(after) {
             ensure!(
                 observed(path)? == before,
@@ -143,13 +351,26 @@ impl Transaction {
             );
             return Ok(());
         }
-        let index = self.prepare_change(path, before, Some(after))?;
+        ensure!(
+            self.stages[stage].identity == staged.identity,
+            "Setup staging identity changed"
+        );
+        let index = self.prepare_change(
+            path,
+            before,
+            Some(after),
+            Some(staged.identity),
+            Some(stage),
+        )?;
         // Never replace a file created by somebody else after the old file was
         // moved. A failed publication is recovered with the rest of setup.
         pending
-            .persist_noclobber(path)
+            .persist_noclobber(&self.changes[index].path)
             .map_err(|failure| failure.error)?;
         self.changes[index].applied = true;
+        #[cfg(test)]
+        self.checkpoint("published", index);
+        self.record(journal::Record::Applied { index })?;
         Ok(())
     }
 
@@ -163,13 +384,43 @@ impl Transaction {
         if create_only && before.is_some() {
             return Err(io::Error::from(io::ErrorKind::AlreadyExists).into());
         }
+        self.write_observed(path, before, write)
+    }
+
+    fn write_observed(
+        &mut self,
+        path: &Path,
+        before: Option<[u8; 32]>,
+        write: impl FnOnce(&mut File) -> io::Result<()>,
+    ) -> Result<()> {
         fs::create_dir_all(path.parent().context("Missing setup parent")?)?;
         let mut pending = tempfile::Builder::new()
             .prefix(".eef-setup-stage-")
             .tempfile_in(path.parent().unwrap())?;
+        let stage = Stage {
+            path: journal::location(pending.path())?,
+            identity: file_id(pending.as_file())?,
+        };
+        if self.journal.is_some() && !self.verified_volumes.contains(&stage.identity.volume) {
+            journal::probe_identity(path.parent().unwrap())?;
+            self.verified_volumes.push(stage.identity.volume);
+        }
+        if let Some(journal) = &self.journal {
+            journal.check_stage(&stage)?;
+        }
+        let index = self.stages.len();
+        self.record(journal::Record::Staging {
+            index,
+            stage: stage.clone(),
+        })?;
+        self.stages.push(stage);
+        #[cfg(test)]
+        self.checkpoint("staging", index);
         write(pending.as_file_mut())?;
+        #[cfg(test)]
+        self.checkpoint("written", index);
         pending.as_file().sync_all()?;
-        self.publish(path, pending.into_temp_path(), before)
+        self.publish(path, pending.into_temp_path(), before, index)
     }
 
     pub fn replace_with(
@@ -193,37 +444,32 @@ impl Transaction {
         self.replace_with(path, |file| file.write_all(bytes))
     }
 
-    pub fn edit(&mut self, path: &Path, prepare: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
+    pub fn edit(
+        &mut self,
+        path: &Path,
+        prepare: impl FnOnce(Option<&[u8]>) -> Result<Option<Vec<u8>>>,
+    ) -> Result<()> {
         let before = observed(path)?;
-        fs::create_dir_all(path.parent().context("Missing settings parent")?)?;
-        let pending = tempfile::Builder::new()
-            .prefix(".eef-setup-stage-")
-            .tempfile_in(path.parent().unwrap())?
-            .into_temp_path();
-        if before.is_some() {
-            let mut source = File::open(path)?;
-            let mut stage = fs::OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .open(&pending)?;
-            io::copy(&mut source, &mut stage)?;
+        let bytes = before.map(|_| fs::read(path)).transpose()?;
+        if let Some(prepared) = prepare(bytes.as_deref())? {
+            use std::io::Write;
+            self.write_observed(path, before, |file| file.write_all(&prepared))?;
         } else {
-            fs::remove_file(&pending)?;
+            ensure!(
+                observed(path)? == before,
+                "Settings changed during setup; current contents were kept"
+            );
         }
-        prepare(&pending)?;
-        fs::OpenOptions::new()
-            .write(true)
-            .open(&pending)?
-            .sync_all()?;
-        self.publish(path, pending, before)
+        Ok(())
     }
 
     pub fn remove(&mut self, path: &Path) -> Result<()> {
         let Some(before) = observed(path)? else {
             return Ok(());
         };
-        let index = self.prepare_change(path, Some(before), None)?;
+        let index = self.prepare_change(path, Some(before), None, None, None)?;
         self.changes[index].applied = true;
+        self.record(journal::Record::Applied { index })?;
         Ok(())
     }
 
@@ -235,72 +481,99 @@ impl Transaction {
             digest(to)? == before,
             "The update selection changed while it was being preserved"
         );
-        let index = self.prepare_change(from, Some(before), None)?;
+        let index = self.prepare_change(from, Some(before), None, None, None)?;
         self.changes[index].applied = true;
+        self.record(journal::Record::Applied { index })?;
         Ok(())
     }
 
     fn undo(change: &Change) -> Result<()> {
-        let original = change.original.as_ref().filter(|original| original.moved);
-        if !change.applied && original.is_none() {
-            return Ok(());
-        }
-        let expected = if change.applied { change.after } else { None };
-        ensure!(
-            observed(&change.path)? == expected,
-            "A file changed after setup wrote it; current contents were kept: {}",
-            change.path.display()
-        );
-        if let Some(original) = original {
-            ensure!(
-                digest(&original.backup)? == original.digest,
-                "A setup backup changed; it was kept for recovery: {}",
-                original.backup.display()
-            );
-            fs::rename(&original.backup, &change.path).with_context(|| {
-                format!(
-                    "Restore {} from {}",
-                    change.path.display(),
+        let current = observed_file(&change.path)?;
+        let after = change
+            .after
+            .zip(change.after_identity)
+            .map(|(digest, identity)| Fingerprint { digest, identity });
+        if let Some(original) = &change.original {
+            let before = Fingerprint {
+                digest: original.digest,
+                identity: original.identity,
+            };
+            let reserved = Fingerprint {
+                digest: Sha256::digest([]).into(),
+                identity: original.reserved_identity,
+            };
+            match observed_file(&original.backup)? {
+                Some(backup) if backup == reserved => {
+                    fs::remove_file(&original.backup)?;
+                }
+                Some(backup) if backup == before => {
+                    ensure!(
+                        current == after || current.is_none(),
+                        "A file changed after setup wrote it; current contents were kept: {}",
+                        change.path.display()
+                    );
+                    fs::rename(&original.backup, &change.path).with_context(|| {
+                        format!(
+                            "Restore {} from {}",
+                            change.path.display(),
+                            original.backup.display()
+                        )
+                    })?;
+                }
+                None if current == Some(before) => (), // Recovery already restored this file before its progress append.
+                _ => bail!(
+                    "A setup backup changed or is missing; recovery copies were kept: {}",
                     original.backup.display()
-                )
-            })?;
-        } else if change.applied && change.after.is_some() {
+                ),
+            }
+        } else if current == after {
             fs::remove_file(&change.path)?;
+        } else if current.is_some() {
+            ensure!(
+                !change.applied && current.map(|value| value.identity) != change.after_identity,
+                "A file changed after setup wrote it; current contents were kept: {}",
+                change.path.display()
+            );
         }
         Ok(())
     }
 
     pub fn rollback(&mut self) -> Result<()> {
         let mut failures = Vec::new();
-        for change in self.changes.iter().rev() {
-            if let Err(error) = Self::undo(change) {
+        for index in (0..self.changes.len()).rev() {
+            if self.changes[index].reverted {
+                continue;
+            }
+            if let Err(error) = Self::undo(&self.changes[index]) {
+                let change = &self.changes[index];
                 let backup = change
                     .original
                     .as_ref()
                     .map(|original| original.backup.display().to_string())
                     .unwrap_or_else(|| "no prior file".into());
                 failures.push(format!("{error:#}; recovery backup: {backup}"));
-            } else if let Some(original) =
-                change.original.as_ref().filter(|original| !original.moved)
-            {
-                // A failed move left only our reserved empty backup file.
-                let remove = (|| -> Result<()> {
-                    ensure!(
-                        digest(&original.backup)? == <[u8; 32]>::from(Sha256::digest([])),
-                        "Unused backup file changed; it was kept"
-                    );
-                    fs::remove_file(&original.backup)?;
-                    Ok(())
-                })();
-                if let Err(error) = remove {
-                    failures.push(format!(
-                        "Remove unused backup {}: {error}",
-                        original.backup.display()
-                    ));
+            } else {
+                #[cfg(test)]
+                self.checkpoint("undone", index);
+                self.changes[index].reverted = true;
+                if self.changes[index].logged {
+                    if let Err(error) = self.record(journal::Record::Undone { index }) {
+                        failures.push(format!("Record recovered file: {error:#}"));
+                    }
                 }
             }
         }
         self.finished = true;
+        if failures.is_empty() {
+            failures.extend(self.cleanup_stages());
+        }
+        if failures.is_empty() {
+            if let Some(journal) = self.journal.take() {
+                if let Err(error) = journal.remove() {
+                    failures.push(format!("Remove completed recovery journal: {error:#}"));
+                }
+            }
+        }
         if !failures.is_empty() {
             bail!(
                 "Setup rollback needs attention. Recovery backups were kept.\n{}",
@@ -310,24 +583,89 @@ impl Transaction {
         Ok(())
     }
 
-    pub fn commit(&mut self) -> Vec<String> {
+    pub fn commit(&mut self) -> Result<Vec<String>> {
+        self.record(journal::Record::Committed)?;
         self.finished = true;
+        #[cfg(test)]
+        self.checkpoint("committed", 0);
+        Ok(self.cleanup_committed())
+    }
+
+    fn cleanup_committed(&mut self) -> Vec<String> {
         let mut warnings = Vec::new();
-        for original in self
-            .changes
-            .iter()
-            .filter_map(|change| change.original.as_ref())
-        {
+        for index in 0..self.changes.len() {
+            if self.changes[index].cleaned {
+                continue;
+            }
+            let Some(original) = &self.changes[index].original else {
+                continue;
+            };
             let remove = (|| -> Result<()> {
-                ensure!(
-                    digest(&original.backup)? == original.digest,
-                    "Previous-file backup changed; it was kept"
-                );
-                fs::remove_file(&original.backup)?;
+                if let Some(backup) = observed_file(&original.backup)? {
+                    let before = Fingerprint {
+                        digest: original.digest,
+                        identity: original.identity,
+                    };
+                    let reserved = Fingerprint {
+                        digest: Sha256::digest([]).into(),
+                        identity: original.reserved_identity,
+                    };
+                    ensure!(
+                        backup == before || backup == reserved,
+                        "Previous-file backup changed; it was kept"
+                    );
+                    fs::remove_file(&original.backup)?;
+                }
                 Ok(())
             })();
             if let Err(error) = remove {
                 warnings.push(format!("{}: {error}", original.backup.display()));
+            } else {
+                #[cfg(test)]
+                self.checkpoint("cleaned", index);
+                self.changes[index].cleaned = true;
+                if self.changes[index].logged {
+                    if let Err(error) = self.record(journal::Record::Cleaned { index }) {
+                        warnings.push(format!("Record backup cleanup: {error:#}"));
+                    }
+                }
+            }
+        }
+        warnings.extend(self.cleanup_stages());
+        if warnings.is_empty() {
+            if let Some(journal) = self.journal.take() {
+                if let Err(error) = journal.remove() {
+                    warnings.push(format!("Remove completed setup journal: {error:#}"));
+                }
+            }
+        }
+        warnings
+    }
+
+    fn cleanup_stages(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for stage in &self.stages {
+            let cleanup = (|| -> Result<()> {
+                match fs::symlink_metadata(&stage.path) {
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                    Err(error) => return Err(error.into()),
+                    Ok(metadata) => ensure!(
+                        metadata.file_type().is_file(),
+                        "Staging path is no longer a regular file"
+                    ),
+                }
+                ensure!(
+                    file_id(&File::open(&stage.path)?)? == stage.identity,
+                    "A different file occupies the staging path; it was kept"
+                );
+                fs::remove_file(&stage.path)?;
+                Ok(())
+            })();
+            if let Err(error) = cleanup {
+                warnings.push(format!(
+                    "Keep staging file {}: {error:#}",
+                    stage.path.display()
+                ));
             }
         }
         warnings
@@ -335,10 +673,27 @@ impl Transaction {
 
     pub fn finish(&mut self, result: Result<()>) -> Result<Vec<String>> {
         match result {
-            Ok(()) => Ok(self.commit()),
-            Err(error) if self.changes.is_empty() => {
+            Ok(()) => match self.commit() {
+                Ok(warnings) => Ok(warnings),
+                Err(error) => match self.rollback() {
+                    Ok(()) => Err(error
+                        .context("Setup commit was not persisted; file changes were rolled back")),
+                    Err(rollback) => Err(error.context(format!("{rollback:#}"))),
+                },
+            },
+            Err(error) if self.changes.is_empty() && self.stages.is_empty() => {
                 self.finished = true;
-                Err(error)
+                match self
+                    .journal
+                    .take()
+                    .map(|journal| journal.remove())
+                    .transpose()
+                {
+                    Ok(_) => Err(error),
+                    Err(recovery) => {
+                        Err(error.context(format!("Keep setup journal for recovery: {recovery:#}")))
+                    }
+                }
             }
             Err(error) => match self.rollback() {
                 Ok(()) => {
@@ -394,6 +749,34 @@ mod tests {
         assert_eq!(fs::read(startup).unwrap(), b"old startup");
         assert!(!added.exists());
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn maximum_length_file_names_use_bounded_backup_names_and_restore() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let path = root.join(format!("{}.dll", "x".repeat(251)));
+        fs::write(&path, b"old long-name file").unwrap();
+        let mut transaction = Transaction::persistent(&root, "eefn", &[]).unwrap();
+        transaction.write(&path, b"new long-name file").unwrap();
+        assert!(
+            transaction.changes[0]
+                .original
+                .as_ref()
+                .unwrap()
+                .backup
+                .file_name()
+                .unwrap()
+                .len()
+                < 100
+        );
+        assert!(
+            transaction
+                .finish(Err(anyhow::anyhow!("late failure")))
+                .is_err()
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"old long-name file");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
     }
 
     #[test]
@@ -504,11 +887,11 @@ mod tests {
         let path = dir.path().join("settings");
         fs::write(&path, b"owner settings").unwrap();
         let mut transaction = Transaction::new();
-        let result = transaction.edit(&path, |stage| {
+        let result = transaction.edit(&path, |before| {
+            assert_eq!(before.unwrap(), b"owner settings");
             assert_eq!(fs::read(&path)?, b"owner settings");
-            fs::write(stage, b"prepared settings")?;
             fs::write(&path, b"concurrent settings")?;
-            Ok(())
+            Ok(Some(b"prepared settings".to_vec()))
         });
         assert!(transaction.finish(result).is_err());
         assert_eq!(fs::read(path).unwrap(), b"concurrent settings");

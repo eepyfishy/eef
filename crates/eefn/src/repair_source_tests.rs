@@ -35,6 +35,29 @@ fn plan(root: &Path, executable: &Path, role: &str, bytes: &[u8]) -> Plan {
 }
 
 #[test]
+fn pending_setup_refuses_repair_proposal_retention_without_resetting_evidence() {
+    for role in ["eef", "eefn"] {
+        let (root, executable, bytes) = fixture(role);
+        let journal = root.path().join(crate::setup_state::JOURNAL_NAME);
+        fs::write(&journal, b"pending setup fixture").unwrap();
+        let error = propose(
+            root.path(),
+            &executable,
+            role,
+            crate::VERSION,
+            SOURCE,
+            &bytes,
+            true,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("matching installer"));
+        assert_eq!(fs::read(&journal).unwrap(), b"pending setup fixture");
+        assert_eq!(fs::read(&executable).unwrap(), b"exact running build");
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 3);
+    }
+}
+
+#[test]
 fn repair_source_cli_requires_check_or_exact_approval_without_raw_artifact_options() {
     assert!(args(&["--check", "--manifest", SOURCE]).check);
     let id = uuid::Uuid::new_v4().to_string();

@@ -117,6 +117,8 @@ mod session_output;
 mod settings_storage_tests;
 pub mod setup;
 pub mod setup_check;
+#[path = "../../../shared/setup_state.rs"]
+pub mod setup_state;
 pub mod startup;
 pub mod submission;
 pub mod tls;

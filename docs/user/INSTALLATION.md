@@ -31,8 +31,10 @@ the published alpha.7 installers.
 
 Development setup also attempts to restore its earlier file changes if a later
 installation step fails. If it reports that recovery needs attention, close the
-apps and keep the reported backup files. This does not provide automatic
-recovery from a crash or power loss. See [setup recovery](../EXE-SETUP-ROLLBACK.md).
+apps and keep the reported backup files. After an interrupted setup, run the
+matching development installer again, choose the same folder and select
+**Install** to recover before continuing. Recovery after power loss is not yet
+verified. See [setup recovery](../EXE-SETUP-ROLLBACK.md).
 
 The installers include Python for supported optional adapters. You do not need
 to install Python separately for the bundled adapters. The node also includes

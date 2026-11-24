@@ -53,6 +53,12 @@ into `versions/<version>`, and
 root executable hands off to the selected version. `previous.txt` supports
 rollback.
 
+In newer development builds, updates, rollback and repair refuse to change a
+folder with a pending EXE setup journal. Run the matching installer again in
+that folder to finish [setup recovery](EXE-SETUP-ROLLBACK.md). Do not remove the
+journal or recovery backups to bypass the refusal. This guard does not change
+stable-only feed policy and is not included retroactively in older binaries.
+
 A ZIP can place the executable at its root or inside one wrapper folder. When
 the root lacks the executable, the updater requires a single matching wrapper.
 The wrapper supplies the app's bundled files while mutable settings and update

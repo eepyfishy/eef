@@ -53,6 +53,9 @@ different, previously approved release to also test a real in-place upgrade.
 This case scans the prior installers and records the before and after installer
 hashes. It checks that upgrade preserves configuration and both startup choices
 across the two roles and installs the same application bytes as a fresh setup.
+Use `-ScratchBase PATH` with an existing directory on another drive when the
+workspace has insufficient room for full installed runtimes and upgrade backups.
+The default remains the workspace's ignored `.validation` directory.
 
 The EXE installer reads and verifies every archive entry before writing to the
 destination. It checks replacement access to existing application files and
@@ -73,8 +76,9 @@ copy. Corrupt payloads fail before any installation write. Development setup
 now moves old files into unique backups on their own drive and restores them
 if a later setup step fails. This covers payloads, settings preparation, update
 selection and shortcuts. Existing configuration is kept, including a
-configuration created while setup is copying files. Automatic recovery after
-process termination or power loss remains a separate gate. See
+configuration created while setup is copying files. Development setup also
+journals changes for retry after process termination. Power-loss durability and
+full release acceptance remain separate gates. See
 [EXE setup rollback](EXE-SETUP-ROLLBACK.md) for the exact limits.
 Setup also reports an unsuccessful app exit during its initial launch wait.
 The wizard keeps a failed launch on an explicit recovery page with
