@@ -117,6 +117,9 @@ mod session_output;
 mod settings_storage_tests;
 pub mod setup;
 pub mod setup_check;
+#[path = "../../../shared/setup_journal_format.rs"]
+#[allow(dead_code)] // The installer writes; applications only inspect the same format.
+pub(crate) mod setup_journal_format;
 #[path = "../../../shared/setup_state.rs"]
 pub mod setup_state;
 pub mod startup;

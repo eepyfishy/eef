@@ -1,7 +1,7 @@
 //! Roll back ordinary setup errors without copying installed runtimes.
 //! Journaled setup recovery. Directory durability after power loss is separate.
+use crate::setup_journal_format::{Change, FileId, Original, Stage, backup_prefix, file_id};
 use anyhow::{Context, Result, bail, ensure};
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -38,95 +38,10 @@ pub fn recover_pending(root: &Path, role: &str, external: &[&Path]) -> Result<bo
     Ok(true)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FileId {
-    volume: u64,
-    identifier: [u8; 16],
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Fingerprint {
     digest: [u8; 32],
     identity: FileId,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Stage {
-    path: PathBuf,
-    identity: FileId,
-}
-
-#[cfg(windows)]
-fn file_id(file: &File) -> Result<FileId> {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Storage::FileSystem::{
-        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
-    };
-    let mut info: FILE_ID_INFO = unsafe { std::mem::zeroed() };
-    ensure!(
-        unsafe {
-            GetFileInformationByHandleEx(
-                file.as_raw_handle(),
-                FileIdInfo,
-                (&mut info as *mut FILE_ID_INFO).cast(),
-                std::mem::size_of::<FILE_ID_INFO>() as u32,
-            )
-        } != 0,
-        "Cannot read a stable setup file identity: {}",
-        io::Error::last_os_error()
-    );
-    ensure!(
-        info.FileId.Identifier.iter().any(|byte| *byte != 0),
-        "The filesystem did not supply a setup file identity"
-    );
-    Ok(FileId {
-        volume: info.VolumeSerialNumber,
-        identifier: info.FileId.Identifier,
-    })
-}
-
-#[cfg(unix)]
-fn file_id(file: &File) -> Result<FileId> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = file.metadata()?;
-    let mut identifier = [0_u8; 16];
-    identifier[..8].copy_from_slice(&metadata.ino().to_le_bytes());
-    Ok(FileId {
-        volume: metadata.dev(),
-        identifier,
-    })
-}
-
-#[cfg(not(any(windows, unix)))]
-fn file_id(_file: &File) -> Result<FileId> {
-    bail!("This platform does not supply setup file identities")
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Original {
-    backup: PathBuf,
-    digest: [u8; 32],
-    moved: bool,
-    identity: FileId,
-    reserved_identity: FileId,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Change {
-    path: PathBuf,
-    original: Option<Original>,
-    after: Option<[u8; 32]>,
-    applied: bool,
-    after_identity: Option<FileId>,
-    reverted: bool,
-    cleaned: bool,
-    #[serde(skip)]
-    logged: bool,
-    stage: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -178,15 +93,6 @@ fn observed_file(path: &Path) -> Result<Option<Fingerprint>> {
         }
         Err(error) => Err(error),
     }
-}
-
-fn backup_prefix(path: &Path) -> Result<String> {
-    let name = path
-        .file_name()
-        .context("Missing setup filename")?
-        .to_string_lossy();
-    let hash = hex::encode(Sha256::digest(name.as_bytes()));
-    Ok(format!(".eef-setup-{}-", &hash[..24]))
 }
 
 fn observed(path: &Path) -> Result<Option<[u8; 32]>> {
@@ -590,6 +496,12 @@ impl Transaction {
     }
 
     pub fn commit(&mut self) -> Result<Vec<String>> {
+        ensure!(
+            self.changes
+                .iter()
+                .all(|change| change.applied && !change.reverted),
+            "Cannot commit incomplete setup changes"
+        );
         self.record(journal::Record::Committed)?;
         self.finished = true;
         #[cfg(test)]
@@ -725,6 +637,41 @@ impl Drop for Transaction {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn commit_refuses_an_unapplied_preparation_and_keeps_it_recoverable() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let path = root.join("owner.data");
+        fs::write(&path, b"owner bytes").unwrap();
+        let mut transaction = Transaction::persistent(&root, "eefn", &[]).unwrap();
+        transaction
+            .prepare_change(
+                &path,
+                Some(fingerprint(&path).unwrap().digest),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let before = fs::read(root.join(JOURNAL_NAME)).unwrap();
+        assert!(
+            transaction
+                .commit()
+                .unwrap_err()
+                .to_string()
+                .contains("incomplete")
+        );
+        assert_eq!(fs::read(root.join(JOURNAL_NAME)).unwrap(), before);
+        assert!(
+            !crate::setup_journal_format::parse(&root.join(JOURNAL_NAME))
+                .unwrap()
+                .committed
+        );
+        transaction.rollback().unwrap();
+        assert_eq!(fs::read(path).unwrap(), b"owner bytes");
+        assert!(!root.join(JOURNAL_NAME).exists());
+    }
 
     #[cfg(windows)]
     fn raw_windows_directory(root: &Path, units: usize) -> PathBuf {

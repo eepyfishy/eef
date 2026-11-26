@@ -3789,6 +3789,9 @@ fn main() -> Result<()> {
         bail!("Panic reports require a service launch, not a command")
     }
     if service {
+        // Inspect before selection handoff, identity writes or service startup.
+        // The installer alone owns recovery and may still hold its update lock.
+        eefn::setup_state::require_startup_ready(&install_dir, "eefn")?;
         eefn::console::detach_owned_service_console_checked()?;
     }
     if parsed.as_ref().is_ok_and(|args| {

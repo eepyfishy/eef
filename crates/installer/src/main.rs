@@ -17,6 +17,9 @@ pub mod atomic_file;
 mod coordinator_config;
 #[path = "../../../shared/installer_payload.rs"]
 mod installer_payload;
+#[path = "../../../shared/setup_journal_format.rs"]
+#[allow(dead_code)] // The installer writes; applications only inspect the same format.
+mod setup_journal_format;
 #[path = "../../../shared/setup_state.rs"]
 #[allow(dead_code)] // Package clients use the guard; setup owns recovery itself.
 mod setup_state;

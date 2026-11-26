@@ -36,6 +36,12 @@ matching development installer again, choose the same folder and select
 **Install** to recover before continuing. Recovery after power loss is not yet
 verified. See [setup recovery](../EXE-SETUP-ROLLBACK.md).
 
+Matching development apps also refuse to start when setup has not finished or
+its recovery state cannot be verified. Run the matching installer in the same
+folder; keep its journal and backups. If setup completed and only backup
+cleanup is pending, the app can start with a cleanup warning. These startup
+checks are not in the published alpha.7 installers.
+
 The installers include Python for supported optional adapters. You do not need
 to install Python separately for the bundled adapters. The node also includes
 the llama.cpp runtime; model files are a separate owner choice and download.

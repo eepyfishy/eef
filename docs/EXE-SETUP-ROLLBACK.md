@@ -86,6 +86,44 @@ setup filenames. Dot/separator/case aliases cannot turn owner configuration into
 a payload replacement. Windows device names, alternate-stream names and unsafe
 components are rejected before creating the installation destination.
 
+## Service startup during pending setup (development)
+
+Current development applications inspect setup state before selected-package
+handoff, console detachment, identity preparation or service startup. An
+uncommitted journal blocks a new service and asks for the matching installer.
+Corrupt, unknown, wrongly bound or out-of-scope records also block startup;
+they are not interpreted as successful setup. The installer and applications
+share the existing bounded version-1 decoder rather than separate commit-marker
+heuristics. A commit requires all prepared changes to have been applied and
+none to have been undone.
+
+A validated committed journal permits startup with a cleanup warning. This
+preserves the existing successful-install behavior when backup or journal
+cleanup fails. A partial final cleanup append does not undo a validated commit.
+The application does not recover, truncate, delete backups or acquire the
+installer's update lock. Any remaining journal still blocks another package
+mutation until the matching installer handles recovery. Help, version and
+offline package inspection remain available.
+
+This is a point-in-time check by matching development executables, not a lock
+held for a service's lifetime. It does not stop an already running application,
+retrofit older binaries, authenticate checksummed records, establish isolation
+against local processes or guarantee startup across concurrent path changes.
+It is not included in the published alpha.7 packages or the `afc2f2f` packages
+described below. Complete package, older-tool and physical acceptance remain
+separate from the executable-level checks.
+
+`tools/test-setup-startup.mjs` exercises both real development executables with
+private configuration and synthetic managed-package metadata. It checks startup
+refusal before settings, database or listener activity for interrupted and
+invalid journals, refusal before selected-package handoff, committed cleanup
+startup with evidence untouched, and available help/version/offline inspection.
+It supplies no model, runtime probe, real node or production package.
+Read-only compatibility is separately checked against four journals captured
+from the previous installer writer: both roles, before and after commit. That
+explicit-input test is ignored in ordinary CI because its historical local
+fixture trees are not shipped with the repository.
+
 ## Verification
 
 Build the installer and its test-only `installer_launch_fixture` example, then:
@@ -273,12 +311,13 @@ An old pathname can briefly be absent between its backup rename and publication;
 recovery requires running the matching installer again. This is not continuous
 application availability. Untested filesystems/network shares, actual power-loss
 and disk-full behavior, orphan metadata from interruption before its first
-journal record, and startup/older-tool interaction require further acceptance.
+journal record, and startup/older-tool interaction beyond the development
+point-in-time check require further acceptance.
 The process tests do not prove directory durability after power loss.
 
 Physical two-PC operation, installer signing/Defender reputation, production
 MSI rollback and stable v0.4.0 acceptance remain separate requirements. Successful
-recovery does not authorize replaying interrupted application work. Startup
-admission must distinguish unfinished setup from committed cleanup warnings;
-the existing package-mutation guard blocks both and is not a service-startup
-guarantee.
+recovery does not authorize replaying interrupted application work. The
+development startup guard distinguishes unfinished setup from committed cleanup
+warnings; it is not a service-lifetime or older-binary guarantee. The separate
+package-mutation guard deliberately blocks both states.

@@ -38,8 +38,12 @@ extra gates. Matching Windows packages pass fresh/alpha.6 upgrades, complete
 inventories, native wizard flows, normal packaged-process interruption/retry and
 installed command-based private enrollment on one PC. Deep-folder staging and
 recovery pass two reproduced regressions and the original failing destination.
-Matching clients refuse package mutations until pending setup recovers. Startup
-with pending setup, physical acceptance, default model quality/bootstrap,
+Matching clients refuse package mutations until pending setup recovers.
+Newer development applications also inspect pending setup before service startup,
+allowing validated committed cleanup with a warning. This is locally exercised
+and requires its own hosted and matching-package acceptance; it does not protect
+already running or older binaries. See [startup scope](EXE-SETUP-ROLLBACK.md#service-startup-during-pending-setup-development).
+Physical acceptance, default model quality/bootstrap,
 power-loss/disk-full and other filesystems, production MSI rollback,
 signing/Defender and the remaining stable-release gates stay open.
 

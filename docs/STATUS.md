@@ -3,6 +3,30 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: read-only setup admission before startup
+
+Both service entrypoints now inspect the shared version-1 setup journal before
+selected-package handoff and startup writes. Uncommitted, invalid or wrongly
+bound evidence refuses a new service. Validated committed cleanup remains
+usable with a warning; the application preserves the journal and backups.
+Help, version and offline package inspection remain available.
+
+Local checks pass 73 installer tests with one explicit-input compatibility test
+ignored in the ordinary run, including the existing 16 forced-termination cases.
+The node library passes its five focused setup checks with the same fixture
+test ignored in its ordinary run.
+That ignored check passed separately against four persisted journals from the
+previous `afc2f2f` writer, with recorded file hashes unchanged. Twenty native
+cases pass against the rebuilt applications, including direct versioned launches.
+The test reproduced the preceding coordinator build starting despite an
+uncommitted journal. The native startup suite is now required by hosted CI;
+hosted acceptance of this increment is pending.
+
+This is a point-in-time startup check, not protection for already running or
+older executables, a lifetime lock, power-loss durability or a security boundary.
+Matching full-package, physical and stable-release acceptance remain open. See
+[behavior and verification scope](EXE-SETUP-ROLLBACK.md#service-startup-during-pending-setup-development).
+
 ## In development: matching Windows packages and setup recovery
 
 Source `afc2f2f` passes

@@ -65,7 +65,8 @@ for(const os of ['windows-2025','ubuntu-24.04'])for(const mode of ['headless','d
   assert.equal(canRollback(matrix,reachable,()=>cancelled),false,'Skipped prerequisites must not reach installer rollback execution');
  }
 }
-const scripts=[...native.matchAll(/'(test-[\w-]+\.mjs)'/g)].map(match=>match[1]);assert.equal(scripts.length,39);assert.equal(new Set(scripts).size,39);
+const scripts=[...native.matchAll(/'(test-[\w-]+\.mjs)'/g)].map(match=>match[1]);assert.equal(scripts.length,40);assert.equal(new Set(scripts).size,40);
+assert(scripts.includes('test-setup-startup.mjs'));
 assert(scripts.includes('test-interpreter-quality-ollama.mjs'));
 assert(scripts.includes('test-model-lifecycle-policy.mjs'));
 assert(scripts.includes('test-camera-check.mjs'));

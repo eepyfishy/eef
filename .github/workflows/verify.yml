@@ -169,6 +169,7 @@ jobs:
           $scripts = @(
             'test-coordinator-initialization.mjs',
             'test-service-startup-lock.mjs',
+            'test-setup-startup.mjs',
             'test-automation-schedules.mjs',
             'test-package-setup.mjs',
             'test-package-policy.mjs',

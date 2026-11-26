@@ -3348,6 +3348,9 @@ async fn main() -> Result<()> {
     let parsed = Args::try_parse();
     let service = parsed.as_ref().is_ok_and(|args| args.command.is_none());
     if service {
+        // Inspect before selection handoff, identity writes or service startup.
+        // The installer alone owns recovery and may still hold its update lock.
+        eefn::setup_state::require_startup_ready(&install_root, "eef")?;
         eefn::console::detach_owned_service_console_checked()?;
     }
     let repair = parsed.as_ref().is_ok_and(|args| {
