@@ -198,6 +198,35 @@ or committed journals and unexpected executable hashes still fail the check.
 Successful and failed reports were retained separately with installer digests;
 the final successful reports also bind the driver's digest.
 
+## Matching-source long-path regression (2026-11-26)
+
+Clean `47eabcd8c3a078418fd4427a66ab4172ff2d60da` passed 1,933 local
+workspace/all-target tests with one ignored and
+[all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/45777532433).
+The standard bundler built matching application payloads and a static installer,
+passed standalone startup/media imports and Defender scans, and completed with
+an observed native exit of zero. The earlier runner observation that lost its
+child exit code and its original artifacts remain separately retained.
+
+Full-package installation then found an actual node failure. A NumPy license's
+final path was 248 UTF-16 units, but the longer temporary filename exceeded the
+legacy Windows path limit. The staging helper's native Windows calls received
+an ordinary path and returned error 3. The node setup rolled back; independent
+inspection found only the reusable lock and empty directories in that fresh
+destination. The coordinator's fresh installation and alpha.6 upgrade passed,
+but the combined installer suite failed and is not accepted.
+
+Setup now resolves staging and identity-probe parents before creating temporary
+files, preserving Windows' canonical extended prefix through publication.
+It does not change a registry setting, shorten the destination, change the
+journal schema or relax ownership checks. Two Windows regressions reproduced
+the failure before this change and now pass: a short final filename whose
+staging path exceeds the limit, including rollback and commit, and uncommitted
+recovery with the installation root itself beyond the limit. All 68 installer
+tests pass, including the existing 16 owned-process termination cases. Full
+matching-package installation and upgrade must be rerun with the fix before
+claiming that acceptance gate.
+
 ## Remaining release gates
 
 An old pathname can briefly be absent between its backup rename and publication;

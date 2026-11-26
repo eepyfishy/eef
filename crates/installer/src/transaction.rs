@@ -393,16 +393,22 @@ impl Transaction {
         before: Option<[u8; 32]>,
         write: impl FnOnce(&mut File) -> io::Result<()>,
     ) -> Result<()> {
-        fs::create_dir_all(path.parent().context("Missing setup parent")?)?;
+        let parent = path.parent().context("Missing setup parent")?;
+        fs::create_dir_all(parent)?;
+        // tempfile's native Windows calls need the extended path prefix even
+        // when only its scratch filename pushes the full path over MAX_PATH.
+        let parent = parent
+            .canonicalize()
+            .context("Resolve setup staging folder")?;
         let mut pending = tempfile::Builder::new()
             .prefix(".eef-setup-stage-")
-            .tempfile_in(path.parent().unwrap())?;
+            .tempfile_in(&parent)?;
         let stage = Stage {
             path: journal::location(pending.path())?,
             identity: file_id(pending.as_file())?,
         };
         if self.journal.is_some() && !self.verified_volumes.contains(&stage.identity.volume) {
-            journal::probe_identity(path.parent().unwrap())?;
+            journal::probe_identity(&parent)?;
             self.verified_volumes.push(stage.identity.volume);
         }
         if let Some(journal) = &self.journal {
@@ -719,6 +725,73 @@ impl Drop for Transaction {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[cfg(windows)]
+    fn raw_windows_directory(root: &Path, units: usize) -> PathBuf {
+        use std::os::windows::ffi::OsStrExt;
+        assert!(matches!(
+            root.components().next(),
+            Some(std::path::Component::Prefix(prefix))
+                if matches!(prefix.kind(), std::path::Prefix::Disk(_))
+        ));
+        let mut path = root.to_path_buf();
+        loop {
+            let length = path.as_os_str().encode_wide().count();
+            if length >= units {
+                break;
+            }
+            path.push("d".repeat((units - length).saturating_sub(1).clamp(1, 32)));
+        }
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_long_paths_stage_short_names_and_preserve_rollback_and_commit() {
+        use std::os::windows::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let parent = raw_windows_directory(dir.path(), 246);
+        let path = parent.join("COPYING");
+        assert!(path.as_os_str().encode_wide().count() < 260);
+        fs::write(&path, b"owner contents").unwrap();
+        let original = fingerprint(&path).unwrap();
+        let mut transaction = Transaction::persistent(dir.path(), "eefn", &[]).unwrap();
+        transaction.write(&path, b"first replacement").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"first replacement");
+        transaction.rollback().unwrap();
+        assert_eq!(fingerprint(&path).unwrap(), original);
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
+        assert!(!dir.path().join(JOURNAL_NAME).exists());
+        let mut transaction = Transaction::persistent(dir.path(), "eefn", &[]).unwrap();
+        transaction.write(&path, b"committed replacement").unwrap();
+        assert!(transaction.commit().unwrap().is_empty());
+        assert_eq!(fs::read(&path).unwrap(), b"committed replacement");
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
+        assert!(!dir.path().join(JOURNAL_NAME).exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_long_paths_recover_uncommitted_publication_in_a_deep_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = raw_windows_directory(dir.path(), 280);
+        let path = root.join("owner-file");
+        fs::write(&path, b"owner contents").unwrap();
+        let original = fingerprint(&path).unwrap();
+        let mut transaction = Transaction::persistent(&root, "eefn", &[]).unwrap();
+        transaction
+            .write(&path, b"interrupted replacement")
+            .unwrap();
+        // Simulate a lost process without invoking ordinary Drop rollback.
+        transaction.finished = true;
+        drop(transaction);
+        assert!(root.join(JOURNAL_NAME).is_file());
+        assert!(recover_pending(&root, "eefn", &[]).unwrap());
+        assert_eq!(fingerprint(&path).unwrap(), original);
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        assert!(!root.join(JOURNAL_NAME).exists());
+    }
 
     #[test]
     fn late_failure_restores_multiple_edits_deletions_and_new_files() {

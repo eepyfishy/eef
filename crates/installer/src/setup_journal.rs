@@ -106,13 +106,16 @@ fn regular(path: &Path) -> Result<()> {
 }
 
 pub(super) fn probe_identity(parent: &Path) -> Result<()> {
+    let parent = parent
+        .canonicalize()
+        .context("Resolve setup identity probe folder")?;
     let source = tempfile::Builder::new()
         .prefix(".eef-setup-probe-")
-        .tempfile_in(parent)?;
+        .tempfile_in(&parent)?;
     let before = file_id(source.as_file())?;
     let target = tempfile::Builder::new()
         .prefix(".eef-setup-probe-")
-        .tempfile_in(parent)?
+        .tempfile_in(&parent)?
         .into_temp_path();
     fs::remove_file(&target)?;
     let moved = source
