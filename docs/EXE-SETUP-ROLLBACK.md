@@ -177,6 +177,27 @@ in the system temporary directory, leaving E:'s limited space available. No
 model was downloaded or selected, no node/coordinator service was launched,
 and no release or remote node update was performed.
 
+The normal packaged binaries also passed forced-termination recovery for both
+roles during real alpha.6 upgrades. `tools/test-installer-interruption.ps1`
+started each installer in an isolated directory, observed the replacement
+executable, and killed only the process handle it had created. After termination,
+the expected new executable hash was present and the checksummed journal was
+uncommitted. The eef case retained 27 prepared and applied changes; the node case
+also retained 27, alongside 2,279 staging records. An ordinary installer rerun
+recovered and completed, preserved configuration and an unrelated owner file,
+and left no setup journal, stage files or backups. All 53/2,286 immutable files
+passed again, as did the node's bundled runtime probes. These are the same
+mixed-source fixtures described above, without a production interruption hook.
+
+An earlier observation attempt missed the interruption window while hashing
+the executable and parsing the live journal; setup had removed the journal
+before inspection after termination. That attempt remains a failed observation.
+The final driver keeps live observation short, then verifies the stopped
+process's executable bytes and full journal before attempting recovery. Missing
+or committed journals and unexpected executable hashes still fail the check.
+Successful and failed reports were retained separately with installer digests;
+the final successful reports also bind the driver's digest.
+
 ## Remaining release gates
 
 An old pathname can briefly be absent between its backup rename and publication;

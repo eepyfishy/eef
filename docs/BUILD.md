@@ -62,6 +62,24 @@ Use `-ScratchBase PATH` with an existing directory on another drive when the
 workspace has insufficient room for full installed runtimes and upgrade backups.
 The default remains the workspace's ignored `.validation` directory.
 
+To check process-interruption recovery with full packages, use distinct approved
+old and candidate installers and the expected candidate application digest:
+
+```powershell
+.\tools\test-installer-interruption.ps1 -ReleaseDir PATH -PreviousReleaseDir OLD_PATH -ScratchBase EXISTING_DIRECTORY -Product eefn -ExpectedBinarySha256 $expectedSha256
+```
+
+Repeat with `-Product eef` and that application's digest. The test installs into
+a new isolated directory, stops only its own candidate installer after detecting
+an executable replacement, and requires the expected executable bytes and a
+valid uncommitted journal after termination. It then runs the normal installer
+again, verifies settings and unrelated data preservation, checks all immutable
+inventory entries, and probes the node's bundled runtimes. A completed setup or
+missed interruption is a failed observation, never a recovery pass. It uses no
+production fault hook and is separate from the small synthetic CI fixtures.
+See [the full-payload recovery evidence](EXE-SETUP-ROLLBACK.md#full-payload-development-probe-2026-11-26)
+for source and acceptance limits.
+
 The EXE installer reads and verifies every archive entry before writing to the
 destination. It checks replacement access to existing application files and
 keeps those handles until extraction finishes. A file already locked against
