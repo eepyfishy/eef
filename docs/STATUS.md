@@ -3,6 +3,30 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: matching Windows packages and setup recovery
+
+Source `afc2f2f` passes
+[all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/45783765642).
+Reconciled Windows/headless logs contain 1,964 passing Rust tests with one
+ignored, all 39 native suites and the retained extra gates. The local default
+workspace passed 1,935 tests with one ignored. Two added Windows regressions
+reproduced and fixed staging/probe failures in deep directories.
+
+Matching Windows application and installer packages passed fresh installation,
+actual alpha.6 upgrades, complete immutable inventories, startup/configuration
+preservation, native wizard flows and forced-termination recovery through an
+ordinary rerun. The original failing node folder also passed without shortening
+it or changing Windows policy. Installed binaries passed headless private
+enrollment with two logical nodes, explicit restart consent and no replay after
+a lost reply. See [exact installer evidence and artifact digests](EXE-SETUP-ROLLBACK.md#matching-package-acceptance-for-afc2f2f).
+
+This is development acceptance on one Windows PC. The packages retain internal
+version `0.4.0-alpha.7`; no release, feed or physical-node update is implied.
+Startup with pending setup, physical two-PC/model/media/resource/stop checks,
+default interpreter quality/bootstrap, power-loss/disk-full and other filesystems,
+production MSI rollback, signing/Defender reputation and remaining core-roadmap
+gates stay open. Stable v0.4.0 is not accepted.
+
 ## In development: model placement and workload authoring
 
 Source `94847dd` passed all four jobs. Windows/headless passed 1,893 Rust

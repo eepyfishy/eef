@@ -31,15 +31,17 @@ change the current stable v0.4.0 implementation and acceptance requirements.
 
 Development [EXE setup rollback](EXE-SETUP-ROLLBACK.md) now covers ordinary
 failures across payloads, settings preparation, update selection and shortcuts
-under the shared setup/update lock. Its ordinary-failure checkpoint `4464389`
-passed [all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/45194888908),
-including 1,943 Windows/headless Rust tests, 39 native command suites and the
-separate quiet installer fixture. A subsequent development journal increment
-passes 66 local installer tests, 16 forced process interruptions, 51 focused node
-tests and the existing synthetic native/wizard checks. Matching clients now
-refuse package mutations until pending setup recovers. Current full-package and
-physical acceptance, power-loss/disk-full and other-filesystem behavior,
-production MSI rollback, signing/Defender and stable-release gates remain open.
+under the shared setup/update lock. Checkpoint `afc2f2f` passes
+[all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/45783765642),
+including 1,964 Windows/headless Rust tests, 39 native command suites and retained
+extra gates. Matching Windows packages pass fresh/alpha.6 upgrades, complete
+inventories, native wizard flows, normal packaged-process interruption/retry and
+installed command-based private enrollment on one PC. Deep-folder staging and
+recovery pass two reproduced regressions and the original failing destination.
+Matching clients refuse package mutations until pending setup recovers. Startup
+with pending setup, physical acceptance, default model quality/bootstrap,
+power-loss/disk-full and other filesystems, production MSI rollback,
+signing/Defender and the remaining stable-release gates stay open.
 
 One-shot stop persistence passes scoped source acceptance at `117c750` in
 [run 44318762717](https://github.com/eepyfishy/eef/actions/runs/44318762717):

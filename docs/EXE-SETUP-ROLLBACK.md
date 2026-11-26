@@ -224,8 +224,48 @@ the failure before this change and now pass: a short final filename whose
 staging path exceeds the limit, including rollback and commit, and uncommitted
 recovery with the installation root itself beyond the limit. All 68 installer
 tests pass, including the existing 16 owned-process termination cases. Full
-matching-package installation and upgrade must be rerun with the fix before
-claiming that acceptance gate.
+matching-package reruns are recorded below.
+
+### Matching-package acceptance for `afc2f2f`
+
+Clean `afc2f2f6d3d048a7cd5d80da727a9986ac66859e` passed 1,935 local
+workspace/all-target tests with one ignored and
+[all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/45783765642).
+Raw-log reconciliation confirms 1,964 passing Windows/headless Rust tests with
+one ignored, all 39 native suites, the extra registration-close case, the quiet
+installer fixture and the nine Cargo output-directory checks.
+
+The standard bundler produced matching application and installer sources with
+an observed native exit of zero. Both exact installers passed Defender with
+definitions `1.463.471.0`. Their static installer prefix matches the compiled
+stub's digest and has no LLVM-MinGW runtime DLL import or interruption hook.
+
+| Development installer | Bytes | SHA-256 |
+| --- | ---: | --- |
+| eef | 23,711,288 | `0546ce845cf3498c9956ef4673946cc69b9db777e88e596e2ffee6d97981bc03` |
+| eef node | 115,112,423 | `a18648c1160cff1d08187191fda00cd3eb2f870787db5e1e5133330716d1acc4` |
+
+The node installer succeeded at the original failing destination, including the
+same 248-unit license path, without shortening the folder or changing Windows
+policy. The complete fresh-install and actual alpha.6-upgrade suite then passed
+for both roles. It preserved configuration, both startup choices, retained
+versions and backed-up update selection. All 53/2,286 immutable files verified
+after fresh installation and upgrade; node media imports and llama.cpp startup
+also passed. The native wizard completed installation for both roles, including
+review-before-write and Back preserving choices.
+
+Both normal packaged installers passed an owned-process termination during
+upgrade: expected new executable bytes were present while the journal remained
+uncommitted. An ordinary rerun recovered and completed, preserved settings and
+unrelated owner data, verified the complete inventory and left no setup scratch
+or journal. No production halt hook was used. The installed binaries also passed
+[private local enrollment](LOCAL-ENROLLMENT.md) with two logical nodes, explicit
+restart consent and a lost reply that did not replay enrollment.
+
+These remain local development packages at internal version `0.4.0-alpha.7`.
+No release asset, update feed or physical node was changed. Local process tests,
+runtime imports and scans do not establish physical two-PC, real-model/media,
+power-loss, disk-full, signing or stable v0.4.0 acceptance.
 
 ## Remaining release gates
 
@@ -236,7 +276,9 @@ and disk-full behavior, orphan metadata from interruption before its first
 journal record, and startup/older-tool interaction require further acceptance.
 The process tests do not prove directory durability after power loss.
 
-Current full payload fresh/upgrade acceptance, physical two-PC operation,
-installer signing/Defender reputation, production MSI rollback and stable v0.4.0
-acceptance remain separate requirements. The synthetic fixture results do not
-close them or authorize replaying interrupted application work.
+Physical two-PC operation, installer signing/Defender reputation, production
+MSI rollback and stable v0.4.0 acceptance remain separate requirements. Successful
+recovery does not authorize replaying interrupted application work. Startup
+admission must distinguish unfinished setup from committed cleanup warnings;
+the existing package-mutation guard blocks both and is not a service-startup
+guarantee.
