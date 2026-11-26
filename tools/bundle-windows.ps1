@@ -249,6 +249,10 @@ try {
     Expand-Archive -LiteralPath $pythonZip -DestinationPath (Join-Path $bundle "python")
     Remove-Item -LiteralPath $pythonZip
 
+    # CPython's DLL loader also needs extended import paths for dependencies of
+    # bundled extensions in deep folders. This adds no host/environment paths.
+    Copy-Item -LiteralPath (Join-Path $workspace 'python/bundled_sitecustomize.py') -Destination (Join-Path $bundle 'python/sitecustomize.py')
+
     $pth = Join-Path $bundle "python\python311._pth"
     @("python311.zip", ".", "Lib\site-packages", "import site") | Set-Content -LiteralPath $pth -Encoding ASCII
     if (-not $SkipOptionalPythonPackages) {
@@ -306,6 +310,12 @@ try {
         Remove-Item -LiteralPath $resolvedSitePackages -Recurse
     }
 
+    if (-not $SkipOptionalPythonPackages) {
+        # Keep the stock wheel intact. This small bundle-local Python module
+        # supplies the same two APIs without pywin32's truncated native buffer.
+        Copy-Item -LiteralPath (Join-Path $workspace 'python/bundled_win32sysloader.py') -Destination (Join-Path $eefnPackage 'python/_win32sysloader.py')
+    }
+
     Copy-Item -LiteralPath (Join-Path $bundle "eef.exe") -Destination $eefPackage
     Copy-Item -LiteralPath (Join-Path $workspace "tools\README-coordinator.txt") -Destination (Join-Path $eefPackage "README.txt")
     New-Item -ItemType Directory -Path (Join-Path $eefPackage "config") | Out-Null
@@ -336,7 +346,7 @@ try {
             Invoke-RequiredBundleProbe -Executable (Join-Path $package "$product.exe") -Arguments @('--version') -ExpectedOutput "$product $version"
             Invoke-RequiredBundleProbe -Executable $python -Arguments @('-I', '-B', '-c', 'import sys; print(sys.version.split()[0])') -ExpectedOutput $pythonVersion
             if ($product -eq 'eefn' -and -not $SkipOptionalPythonPackages) {
-                Invoke-RequiredBundleProbe -Executable $python -Arguments @('-I', '-B', '-c', 'import PIL, pyautogui, sounddevice, soundfile, cv2, pyttsx3')
+                Invoke-RequiredBundleProbe -Executable $python -Arguments @('-I', '-B', '-c', "import PIL.Image, pyautogui, sounddevice, soundfile, cv2, pyttsx3, win32api, pythoncom, pywintypes, os, sys, _win32sysloader; assert os.path.samefile(_win32sysloader.__file__, os.path.join(os.path.dirname(sys.executable), '_win32sysloader.py'))")
             }
         } finally {
             $env:PATH = $toolchainPath

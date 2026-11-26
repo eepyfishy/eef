@@ -3,6 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: deep bundled-Python imports
+
+Matching `59a9f43` packages built successfully and passed local Defender scans
+and shallow isolated startup/media probes. Full installer validation then failed
+at a deeper node destination: `_cffi_backend` could not load. The actual installed
+node's offline doctor also failed Pillow, sounddevice and soundfile imports.
+That package run is not accepted; neither real installation nor the remote node
+has been updated from it.
+
+Development packaging now prefixes existing bundled import paths and provides
+a bundle-local compatibility implementation of pywin32's two DLL-loader
+functions. It keeps bounded complete loaded filenames instead of truncation,
+with the existing search flags and image lifetime. Sixteen focused checks pass,
+including a real Windows API observation. A deeper copied runtime preview passes
+both import orders for eight modules and native kernel-event interoperability.
+The donor's complete immutable inventory remains unchanged. These checks do not
+replace a rebuilt package, the original failing destination or physical tests.
+See [failure, implementation and remaining scope](EXE-SETUP-ROLLBACK.md#deep-bundled-python-imports-development-investigation).
+
 ## In development: read-only setup admission before startup
 
 Both service entrypoints now inspect the shared version-1 setup journal before
@@ -19,8 +38,12 @@ That ignored check passed separately against four persisted journals from the
 previous `afc2f2f` writer, with recorded file hashes unchanged. Twenty native
 cases pass against the rebuilt applications, including direct versioned launches.
 The test reproduced the preceding coordinator build starting despite an
-uncommitted journal. The native startup suite is now required by hosted CI;
-hosted acceptance of this increment is pending.
+uncommitted journal. Checkpoint `2026e65` passes
+[all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/45822626943).
+Raw logs confirm 1,973 Windows/headless Rust tests with three ignored, all 40
+native suites and the retained extra gates. Windows/dashboard passes 1,944 tests;
+both Linux jobs pass 1,872. The newer Python packaging changes above require
+their own validation.
 
 This is a point-in-time startup check, not protection for already running or
 older executables, a lifetime lock, power-loss durability or a security boundary.

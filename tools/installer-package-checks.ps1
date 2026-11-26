@@ -23,7 +23,7 @@ function Assert-InstalledInventory {
 
 function Test-BundledMediaRuntime {
     param([Parameter(Mandatory)][string]$Destination)
-    & (Join-Path $Destination 'python/python.exe') -I -c "import PIL, pyautogui, sounddevice, soundfile, cv2, pyttsx3; print('Bundled media imports passed')" | ForEach-Object { Write-Host $_ }
+    & (Join-Path $Destination 'python/python.exe') -I -B -c "import PIL.Image, pyautogui, sounddevice, soundfile, cv2, pyttsx3, win32api, pythoncom, pywintypes, os, sys, _win32sysloader; assert os.path.samefile(_win32sysloader.__file__, os.path.join(os.path.dirname(sys.executable), '_win32sysloader.py')); print('Bundled media imports passed')" | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) { throw 'Bundled Python import failed' }
     & (Join-Path $Destination 'tools/llama-server.exe') --version | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) { throw 'Minimal llama.cpp runtime failed to start' }

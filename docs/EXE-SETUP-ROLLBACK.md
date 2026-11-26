@@ -320,6 +320,45 @@ power-loss, disk-full, signing or stable v0.4.0 acceptance.
 
 ## Remaining release gates
 
+### Deep bundled-Python imports (development investigation)
+
+The subsequent matching `59a9f43` packages passed their shallow staging imports
+and local Defender scans, but full installation at a deeper test destination
+failed while loading `_cffi_backend`. The installed node's own
+`doctor --probe --media` reproduced failed Pillow, sounddevice and soundfile
+imports; its core Python and llama.cpp probes passed. This package validation
+is **not accepted**. The original installed payload and failed reports remain
+retained, with its immutable inventory checked after the read-only probes.
+
+An external probe at the same destination loaded those modules after converting
+the existing bundled import paths to Windows' extended form. A new, deeper
+preview exposed a second problem: the pinned pywin32 helper truncates a loaded
+DLL filename at 259 characters. The
+[upstream b312 helper](https://github.com/mhammond/pywin32/blob/b312/win32/src/_win32sysloader.cpp)
+uses fixed `_MAX_PATH` buffers. The preview observed a truncated name that did
+not identify a file.
+
+Development packaging now adds a small `sitecustomize.py` for the embedded
+runtime's own absolute import paths, using its existing `import site` startup
+entry. It adds no host search paths and changes no custom Python installation,
+registry setting or permissions. The
+[documented Python startup hook](https://docs.python.org/3.11/library/site.html#module-sitecustomize)
+runs after site path processing. The node package additionally includes a
+bundle-local `_win32sysloader.py` compatibility module: the same two function
+names, Windows search flags and retained-load lifetime, with bounded growing
+filename buffers. The stock wheel and DLLs remain intact. This corrects loaded
+image lookup without installing DLLs globally or guessing a different image.
+Neither change is an isolation boundary.
+
+Pure path/loader checks and a real Windows API observation are added to the
+Windows packaging CI gate. A copied preview loads all eight tested modules in
+both native-first and Python-first order, including a closed, unnamed kernel
+event used to check native-module interoperability. This is preview evidence,
+not a rebuilt-package, physical-device or stable-release acceptance. A new clean
+package must pass the original failing destination and full installer checks
+before either PC is updated. Runtime validators now import `PIL.Image` and use
+`-B` so verification does not generate installed-source caches.
+
 An old pathname can briefly be absent between its backup rename and publication;
 recovery requires running the matching installer again. This is not continuous
 application availability. Untested filesystems/network shares, actual power-loss
