@@ -6,6 +6,9 @@ const workflow=(await readFile(new URL('../.github/workflows/verify.yml',import.
 function step(name){const result=workflow.split(/^      - name: /m).find(block=>block.startsWith(name+'\n'));assert(result,'Missing guarded step');return result;}
 const tests=step('Workspace and all-target regression tests'),build=step('Build Windows command services and isolated helpers'),native=step('Native Windows synthetic regressions (no installer or model download)');
 const firewall=step('Windows firewall command mocks (no policy changes)');
+const packageChecks=step('Windows bundle runtime probe checks (no packaging)');
+assert.match(packageChecks,/^        shell: powershell$/m);
+assert.match(packageChecks,/& \.\/tools\/test-installer-package-checks\.ps1/);
 const rollback=step('Native EXE setup rollback (synthetic; no release acceptance)');
 assert.match(rollback,/^        shell: powershell$/m);
 assert.match(rollback,/\$ErrorActionPreference = 'Stop'\n          & \.\/tools\/test-installer-rollback\.ps1 -BinaryDir target\/debug -SyntheticCi/);

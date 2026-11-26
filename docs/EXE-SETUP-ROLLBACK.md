@@ -137,6 +137,46 @@ to Windows GitHub runners, records `defender_scanned: false`, and makes no
 Defender or full-package release claim. Normal local validation still requires
 the existing Defender scan; no protection settings are changed.
 
+## Full-payload development probe (2026-11-26)
+
+The journal checkpoint `1109085` passed
+[all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/45320784886).
+Its Windows/headless log contains 1,962 passing Rust tests plus one ignored,
+the exact 39 native command suites, the retained extra case and the separate
+quiet installer fixture. Logs were reconciled with that commit's workflow.
+
+A local optimized, static-CRT release-profile installer was then built from
+clean `11090856bb432137b0ce937b700d87abbeb3b19f` using Rust 1.98.1. Its SHA-256 is
+`5067a26d2b5318174984bc61962402a8b9ec104f6c7bec134983bf6c353d889d`.
+Import inspection found no LLVM-MinGW runtime DLL dependency. This tests a
+standalone installer build rather than a debug stub requiring compiler DLLs.
+
+The probe retained the exact published alpha.7 payload bytes from
+`af4dcf495bd53196e3f423ccd0c9b1c341bda754` and replaced only the installer stub.
+It is deliberately a **mixed-source fixture**, not a new release or a package
+claiming that its application executables come from the journal checkpoint.
+
+| Fixture | SHA-256 |
+| --- | --- |
+| eef installer | `cfff2ca6adb0ee2d7f8a9f99b7b1c5fcdfea93c9228628b0d8e5cd905ef4d042` |
+| eef node installer | `024bc10b53fc6e687ec9365652293eac7a4e943a30a0d2c6a62e2db63b41e113` |
+
+Fresh installation and actual upgrades from the published alpha.6 installers
+passed for both roles with configuration and both startup choices preserved.
+The eef inventory has 54 records; the node inventory has 2,287. A separate audit
+of both fresh and upgraded trees verified all 53 and 2,286 immutable file hashes,
+respectively; the one mutable configuration record per role is checked by the
+separate preservation checks. Bundled media imports and the llama.cpp version
+probe passed in both node trees. Original installation reports were kept intact.
+The checker is now shared with the installer test so future upgrade runs also
+verify the entire immutable inventory and repeat the runtime probes.
+
+Defender scans of these fixture installers and the previous installers passed
+with definitions `1.463.471.0`. Larger fixtures used an explicit scratch base
+in the system temporary directory, leaving E:'s limited space available. No
+model was downloaded or selected, no node/coordinator service was launched,
+and no release or remote node update was performed.
+
 ## Remaining release gates
 
 An old pathname can briefly be absent between its backup rename and publication;

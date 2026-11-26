@@ -7,6 +7,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'installer-package-checks.ps1')
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $release = (Resolve-Path -LiteralPath $ReleaseDir).Path
 $previousRelease = if ($PreviousReleaseDir) { (Resolve-Path -LiteralPath $PreviousReleaseDir).Path }
@@ -92,6 +93,8 @@ function Test-PreviousInstallerUpgrade {
         if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $CandidateBinary -Algorithm SHA256).Hash) {
             throw "Upgraded $Product binary differs from the fresh installation"
         }
+        $inventory = Assert-InstalledInventory -Destination $destination -Product $Product
+        if ($Product -ceq 'eefn') { Test-BundledMediaRuntime -Destination $destination }
         Write-Host "Installed-package upgrade passed for $Product ($oldVersion -> $CandidateVersion)"
         return [ordered]@{
             previous_version = $oldVersion
@@ -100,6 +103,9 @@ function Test-PreviousInstallerUpgrade {
             configuration_preserved = $true
             startup_enabled = $expectedStartup
             matches_fresh_binary = $true
+            immutable_files_verified = $inventory.immutable_files_verified
+            mutable_files_skipped = $inventory.mutable_files_skipped
+            bundled_runtimes_probed = ($Product -ceq 'eefn')
         }
     } finally {
         $env:APPDATA = $candidateAppData
@@ -139,24 +145,15 @@ try {
         $binary = Join-Path $destination "$name.exe"
         $unexpected = Get-CimInstance Win32_Process -Filter "Name='$name.exe'" | Where-Object ExecutablePath -eq $binary
         if ($unexpected) { throw 'Quiet installer unexpectedly launched the application' }
-        $inventory = Get-Content -Raw -LiteralPath (Join-Path $destination 'files.sha256.json') | ConvertFrom-Json
-        foreach ($entry in $inventory) {
-            if ($entry.path -eq 'config/default_identity.yaml') { continue } # fresh eef secret
-            $path = [IO.Path]::GetFullPath((Join-Path $destination $entry.path))
-            if (-not $path.StartsWith($destination+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Inventory path escaped test installation' }
-            if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256) { throw "Installed file hash mismatch: $($entry.path)" }
-        }
+        $inventory = Assert-InstalledInventory -Destination $destination -Product $name
         $version = Read-InstalledVersion $destination $name
         if ($ExpectedSourceCommit) { Assert-InstalledProvenance $destination $name $version $ExpectedSourceCommit }
         if ($name -eq 'eefn') {
             $node = Get-Content -Raw -LiteralPath $config | ConvertFrom-Json
             if ($node.models.ollama.selected.Count -or $node.models.llamacpp.slots.Count -or $node.endpoints.Count) { throw 'Fresh node unexpectedly configured a model or endpoint' }
-            & (Join-Path $destination 'python\python.exe') -I -c "import PIL, pyautogui, sounddevice, soundfile, cv2, pyttsx3; print('Bundled media imports passed')"
-            if ($LASTEXITCODE -ne 0) { throw 'Bundled Python import failed' }
-            & (Join-Path $destination 'tools\llama-server.exe') --version
-            if ($LASTEXITCODE -ne 0) { throw 'Minimal llama.cpp runtime failed to start' }
+            Test-BundledMediaRuntime -Destination $destination
         }
-        $result = [ordered]@{product=$name;version=$version;inventory_files=$inventory.Count;quiet_launch_disabled=$true;startup_preserved=$true;config_preserved=$true;manual_upgrade_selects_new_root=$true;previous_update_selection_backed_up=$true}
+        $result = [ordered]@{product=$name;version=$version;inventory_files=$inventory.inventory_files;immutable_files_verified=$inventory.immutable_files_verified;mutable_files_skipped=$inventory.mutable_files_skipped;quiet_launch_disabled=$true;startup_preserved=$true;config_preserved=$true;manual_upgrade_selects_new_root=$true;previous_update_selection_backed_up=$true}
         if ($ExpectedSourceCommit) {
             $result['source_commit'] = $ExpectedSourceCommit.ToLowerInvariant()
             $result['installer_sha256'] = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()

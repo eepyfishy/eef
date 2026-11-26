@@ -53,6 +53,11 @@ different, previously approved release to also test a real in-place upgrade.
 This case scans the prior installers and records the before and after installer
 hashes. It checks that upgrade preserves configuration and both startup choices
 across the two roles and installs the same application bytes as a fresh setup.
+Full inventory checks run after both fresh installation and upgrade, excluding
+the role's documented mutable configuration. Upgraded nodes also repeat bundled
+Python media imports and the llama.cpp version probe. The shared checker has
+synthetic tamper, traversal and empty-inventory regressions in
+`tools/test-installer-package-checks.ps1`; importing its helper starts no process.
 Use `-ScratchBase PATH` with an existing directory on another drive when the
 workspace has insufficient room for full installed runtimes and upgrade backups.
 The default remains the workspace's ignored `.validation` directory.

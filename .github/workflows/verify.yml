@@ -103,6 +103,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           & ./tools/test-bundle-runtime-probes.ps1
+          & ./tools/test-installer-package-checks.ps1
       - name: Read-only MSI payload planning (synthetic)
         run: |
           node tools/test-msi-version-policy.mjs
