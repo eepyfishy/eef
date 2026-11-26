@@ -8,6 +8,7 @@ const tests=step('Workspace and all-target regression tests'),build=step('Build 
 const firewall=step('Windows firewall command mocks (no policy changes)');
 const packageChecks=step('Windows bundle runtime probe checks (no packaging)');
 assert.match(packageChecks,/^        shell: powershell$/m);
+assert.match(packageChecks,/& \.\/tools\/test-bundle-build-paths\.ps1/);
 assert.match(packageChecks,/& \.\/tools\/test-installer-package-checks\.ps1/);
 const rollback=step('Native EXE setup rollback (synthetic; no release acceptance)');
 assert.match(rollback,/^        shell: powershell$/m);

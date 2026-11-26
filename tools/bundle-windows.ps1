@@ -46,6 +46,28 @@ function Write-Utf8NoBom {
     [IO.File]::WriteAllText($Path, $Content, [Text.UTF8Encoding]::new($false))
 }
 
+function Get-BundleReleaseDirectory {
+    param(
+        [Parameter(Mandatory)][string]$CargoPath,
+        [Parameter(Mandatory)][string]$Workspace
+    )
+    Push-Location -LiteralPath $Workspace
+    try {
+        # Cargo resolves CARGO_TARGET_DIR and build.target-dir configuration.
+        # Reading workspace/target instead could package an older executable.
+        $metadataText = & $CargoPath metadata --no-deps --format-version 1 --locked --offline
+        if ($LASTEXITCODE -ne 0) { throw "Cargo metadata failed, exit $LASTEXITCODE" }
+        $metadata = ($metadataText | Out-String) | ConvertFrom-Json
+        $target = $metadata.target_directory
+        if ($target -isnot [string] -or [string]::IsNullOrWhiteSpace($target) -or -not [IO.Path]::IsPathRooted($target)) {
+            throw 'Cargo metadata must report an absolute target_directory'
+        }
+        return Join-Path ([IO.Path]::GetFullPath($target)) 'release'
+    } finally {
+        Pop-Location
+    }
+}
+
 function Invoke-RequiredBundleProbe {
     param(
         [Parameter(Mandatory)][string]$Executable,
@@ -100,6 +122,7 @@ $rustup = Join-Path $env:USERPROFILE ".cargo\bin\rustup.exe"
 if (-not (Test-Path -LiteralPath $rustup)) { throw "rustup.exe was not found; install Rust with rustup first" }
 $cargo = (& $rustup which --toolchain stable-x86_64-pc-windows-gnullvm cargo).Trim()
 if (-not (Test-Path -LiteralPath $cargo)) { throw "cargo.exe was not found in the gnullvm toolchain" }
+$releaseBuild = Get-BundleReleaseDirectory -CargoPath $cargo -Workspace $workspace
 $bundle = if ([IO.Path]::IsPathRooted($BundleDir)) {
     [IO.Path]::GetFullPath($BundleDir)
 } else {
@@ -185,14 +208,14 @@ try {
     } finally {
         Pop-Location
     }
-    & (Join-Path $PSScriptRoot 'check-windows-app-metadata.ps1') -BinaryDir (Join-Path $workspace 'target\release') -Version $version
+    & (Join-Path $PSScriptRoot 'check-windows-app-metadata.ps1') -BinaryDir $releaseBuild -Version $version
     if ($signing) {
         & $signScript -SignToolPath $SignToolPath -CertificateThumbprint $CertificateThumbprint -TimestampUrl $TimestampUrl -Path @(
-            (Join-Path $workspace 'target\release\eef.exe'), (Join-Path $workspace 'target\release\eefn.exe')
+            (Join-Path $releaseBuild 'eef.exe'), (Join-Path $releaseBuild 'eefn.exe')
         )
     }
     foreach ($binary in @('eef.exe', 'eefn.exe', 'eef-installer-stub.exe')) {
-        & $scanScript -Path (Join-Path $workspace "target\release\$binary") -ReportPath (Join-Path $validation "$binary.scan.json")
+        & $scanScript -Path (Join-Path $releaseBuild $binary) -ReportPath (Join-Path $validation "$binary.scan.json")
     }
 
     $freeBytes = (Get-PSDrive -Name $driveName).Free
@@ -201,8 +224,8 @@ try {
     $bundleCreated = $true
     New-Item -ItemType Directory -Path (Join-Path $bundle "config") | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $bundle "python\plugins") | Out-Null
-    Copy-Item -LiteralPath (Join-Path $workspace "target\release\eef.exe") -Destination $bundle
-    Copy-Item -LiteralPath (Join-Path $workspace "target\release\eefn.exe") -Destination $bundle
+    Copy-Item -LiteralPath (Join-Path $releaseBuild 'eef.exe') -Destination $bundle
+    Copy-Item -LiteralPath (Join-Path $releaseBuild 'eefn.exe') -Destination $bundle
     Copy-Item -LiteralPath (Join-Path $workspace "config\default_identity.yaml") -Destination (Join-Path $bundle "config")
     Copy-Item -LiteralPath (Join-Path $workspace "config\node.example.json") -Destination (Join-Path $bundle "config")
     Copy-Item -LiteralPath (Join-Path $workspace "config\python_plugins.example.yaml") -Destination (Join-Path $bundle "config")
@@ -351,7 +374,7 @@ try {
     $eefnPayload = Join-Path $packageRoot "eefn-payload.zip"
     Compress-Archive -Path (Join-Path $eefPackage "*") -DestinationPath $eefPayload -CompressionLevel Optimal
     Compress-Archive -Path (Join-Path $eefnPackage "*") -DestinationPath $eefnPayload -CompressionLevel Optimal
-    $installerStub = Join-Path $workspace "target\release\eef-installer-stub.exe"
+    $installerStub = Join-Path $releaseBuild 'eef-installer-stub.exe'
     New-SelfExtractingInstaller -Stub $installerStub -Payload $eefPayload -Output $eefRelease
     New-SelfExtractingInstaller -Stub $installerStub -Payload $eefnPayload -Output $eefnRelease
     if ($signing) {

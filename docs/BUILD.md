@@ -9,6 +9,15 @@ repository has no host-specific rustup override, so other platforms keep their
 normal Rust host; the workspace declares its minimum Rust version in
 `Cargo.toml`.
 
+For normal host builds, the bundler obtains the release output directory from
+Cargo metadata. `CARGO_TARGET_DIR` and Cargo's `build.target-dir` configuration
+therefore apply to metadata checks, signing, scanning, application copies and
+the installer stub. This allows compiler output on another drive without
+accidentally using older binaries in the checkout's `target` directory. Output
+discovery fails on invalid metadata instead of guessing a fallback path.
+The nine checks in `tools/test-bundle-build-paths.ps1` exercise real Cargo path
+resolution plus rejected metadata; they compile and package nothing.
+
 The easiest reproducible build is:
 
 ```powershell
