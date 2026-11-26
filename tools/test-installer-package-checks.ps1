@@ -42,6 +42,33 @@ foreach ($role in @('eef','eefn')) {
     if ([IO.File]::ReadAllText($config) -cne 'owner-modified settings') { throw 'Read-only inventory verification changed owner settings' }
     $cases += @{role=$role;checks=5;owner_settings_unchanged=$true}
 }
-@{passed=$true;cases=$cases;external_processes_started=$false} | ConvertTo-Json -Depth 4 |
+# Exercise native stderr and nonzero exits under the same all-stream redirection
+# used when retaining full installer logs. This fixture never starts a runtime.
+$fixture = Join-Path $scratch 'runtime probe fixture.exe'
+Add-Type -Language CSharp -OutputType WindowsApplication -OutputAssembly $fixture -TypeDefinition @'
+using System;
+using System.Threading;
+public static class InstalledProbeFixture {
+    public static int Main(string[] args) {
+        Console.Out.WriteLine("fixture stdout");
+        Console.Error.WriteLine("fixture version on stderr");
+        if (args[0] == "--wait") Thread.Sleep(30000);
+        return args[0] == "--fail" ? 19 : 0;
+    }
+}
+'@
+$probeLog = Join-Path $scratch 'native-probes.log'
+Invoke-InstalledRuntimeProbe -Executable $fixture -Arguments '--version' *> $probeLog
+if ([IO.File]::ReadAllText($probeLog) -notmatch 'fixture version on stderr') { throw 'Native stderr evidence was lost' }
+foreach ($case in @(
+    @{arguments='--fail';pattern='*exit 19';timeout=5},
+    @{arguments='--wait';pattern='*timed out*';timeout=1}
+)) {
+    $refused=$false
+    try { Invoke-InstalledRuntimeProbe -Executable $fixture -Arguments $case.arguments -TimeoutSeconds $case.timeout *>> $probeLog }
+    catch { if ($_.Exception.Message -notlike $case.pattern) { throw }; $refused=$true }
+    if (-not $refused) { throw 'Native probe accepted an invalid result' }
+}
+@{passed=$true;cases=$cases;native_probe_checks=3;external_processes_started=$true;real_runtimes_started=$false} | ConvertTo-Json -Depth 4 |
     Set-Content -LiteralPath (Join-Path $scratch 'results.json') -Encoding UTF8
 Write-Host "Installer package inventory checks passed. Evidence: $scratch"
