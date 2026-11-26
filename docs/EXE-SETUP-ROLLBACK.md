@@ -124,6 +124,19 @@ from the previous installer writer: both roles, before and after commit. That
 explicit-input test is ignored in ordinary CI because its historical local
 fixture trees are not shipped with the repository.
 
+For a matching full-package candidate with this guard, the ordinary packaged
+interruption driver accepts `-VerifyStartupAdmission`. After verifying that the
+candidate executable was published and the real journal is still uncommitted,
+it runs that executable in place before the ordinary recovery retry. Private
+invalid settings provide a negative control: a configuration or loader error
+cannot count as refusing unfinished setup. The check requires the exact setup
+error, exit code 1, unchanged journal/settings and no database creation. It
+starts no node/coordinator service, model or network work. The switch is optional
+so the driver can still exercise earlier packages that lack startup admission.
+Its helper passed local positive/negative checks for both roles with generated
+journals and current/preceding application binaries; actual full-package evidence
+must be recorded separately.
+
 ## Verification
 
 Build the installer and its test-only `installer_launch_fixture` example, then:

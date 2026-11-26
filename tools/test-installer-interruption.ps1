@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory)][string]$ScratchBase,
     [Parameter(Mandatory)][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$ExpectedBinarySha256,
     [ValidateSet('eef','eefn')][string]$Product = 'eefn',
+    [switch]$VerifyStartupAdmission,
     [ValidateRange(30,600)][int]$TimeoutSeconds = 180
 )
 $ErrorActionPreference = 'Stop'
@@ -35,6 +36,43 @@ function Wait-CaseInstaller {
     $script:child.Refresh()
     if ($script:child.ExitCode -ne 0) { throw "Installer exited $($script:child.ExitCode); inspect its retained error log" }
     $script:child = $null
+}
+function Assert-InterruptedStartupAdmission([string]$Binary,[string]$Journal) {
+    # Exercise the actual interrupted payload in place. Invalid private settings
+    # also make the old unguarded path fail before any service/model/network
+    # startup; that different failure cannot satisfy this check.
+    $config = Join-Path $scratch 'startup-admission-invalid-config'
+    $stdout = Join-Path $scratch 'startup-admission.stdout.txt'
+    $stderr = Join-Path $scratch 'startup-admission.stderr.txt'
+    [IO.File]::WriteAllText($config,'{')
+    $beforeJournal = (Get-FileHash -LiteralPath $Journal -Algorithm SHA256).Hash
+    $arguments = @('--config',('"'+$config+'"'),'--no-ui')
+    if ($Product -ceq 'eef') {
+        $arguments += @('--no-brain','--database',('"'+(Join-Path $scratch 'startup-admission.db')+'"'))
+    }
+    $application = $null
+    try {
+        $application = Start-Process -FilePath $Binary -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        # Retain the native handle before a short-lived error exit. Refresh can
+        # otherwise lose the exit observation in Windows PowerShell 5.1.
+        $retainedHandle = $application.Handle
+        if (-not $application.WaitForExit(15000)) { throw 'Interrupted application did not refuse startup before the deadline' }
+        $exitCode = $application.ExitCode
+        if ($null -eq $exitCode -or $exitCode -ne 1) { throw "Interrupted application returned unexpected exit code: $exitCode" }
+        $errorText = [IO.File]::ReadAllText($stderr)
+        if ($errorText -notmatch 'Setup did not finish\. Run the matching installer') {
+            throw 'The interrupted application did not report the unfinished setup; configuration/loader errors are not startup-admission evidence'
+        }
+        if ([IO.File]::ReadAllText($config) -cne '{' -or
+            (Get-FileHash -LiteralPath $Journal -Algorithm SHA256).Hash -cne $beforeJournal -or
+            (Test-Path -LiteralPath (Join-Path $scratch 'startup-admission.db'))) {
+            throw 'Startup admission modified its configuration, journal or database'
+        }
+        return [pscustomobject]@{verified=$true;actual_interrupted_payload=$true;refused_before_configuration_parse=$true;
+            journal_unchanged=$true;exit_code=$exitCode;invalid_configuration_negative_control=$true;service_readiness_checked=$false}
+    } finally {
+        if ($application -and -not $application.HasExited) { $application.Kill(); [void]$application.WaitForExit(10000) }
+    }
 }
 function Read-JournalState([string]$Path) {
     # Read a bounded snapshot while allowing the normal installer's append handle.
@@ -133,6 +171,9 @@ try {
     if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedBinarySha256.ToLowerInvariant()) { throw 'The interrupted executable does not match the expected candidate bytes' }
     $observation['observed_published_executable_sha256'] = $ExpectedBinarySha256.ToLowerInvariant()
     $observation['candidate_executable_published_before_commit'] = $true
+    if ($VerifyStartupAdmission) {
+        $observation['startup_admission'] = Assert-InterruptedStartupAdmission -Binary $binary -Journal $journal
+    }
     Start-CaseInstaller $candidate (Join-Path $scratch 'recovery-error.txt')
     Wait-CaseInstaller
     if (Test-Path -LiteralPath $journal) { throw 'Normal retry left a pending journal' }
@@ -145,7 +186,8 @@ try {
         (Get-FileHash -LiteralPath $prior -Algorithm SHA256).Hash.ToLowerInvariant() -cne $priorHash) { throw 'Input installer changed during acceptance' }
     [ordered]@{passed=$true;product=$Product;driver_sha256=$driverHash;candidate_installer_sha256=$candidateHash;previous_installer_sha256=$priorHash;
         observation=$observation;normal_retry_recovered=$true;configuration_preserved=$true;owner_file_preserved=$true;inventory=$inventory;
-        bundled_runtimes_probed=($Product -ceq 'eefn');production_fault_hook=$false;node_or_coordinator_service_started=$false;power_loss_verified=$false;full_release_acceptance=$false} |
+        bundled_runtimes_probed=($Product -ceq 'eefn');startup_admission_requested=[bool]$VerifyStartupAdmission;
+        production_fault_hook=$false;node_or_coordinator_service_started=$false;power_loss_verified=$false;full_release_acceptance=$false} |
         ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $scratch 'results.json') -Encoding UTF8
     Write-Host "Packaged installer interruption passed. Evidence: $scratch"
 } catch {
