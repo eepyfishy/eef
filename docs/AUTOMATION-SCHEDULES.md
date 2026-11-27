@@ -7,6 +7,41 @@ and execute through the existing reviewed grant driver. This is not general
 semantic automation, a second runner, continuous media or stable 0.4.0.
 Nothing activates merely by saving a definition/policy or starting eef.
 
+## Owner schedule Stop worker (development)
+
+The complete owner schedule Stop command now runs on one separately admitted
+blocking callback: the schedule fence, removal from the active timer set,
+ordinary linked-job stop and final schedule/job readback. Input schema, command
+validation and the coordinator runtime check still precede admission. Periodic
+checkpoints and read-only inspection keep their own slots; Stop cannot create
+another schedule, grant driver or unbounded queue. A second concurrent Stop
+returns busy and requires inspection of the original receipt.
+
+The async caller uses a five-second deadline. The actual queued/running callback
+retains its slot after a timeout or disconnected caller. An abandoned callback
+that has not started skips processing. An operation already underway can still
+persist a stop after its caller leaves; a timeout is an unconfirmed outcome,
+not rollback or permission to repeat the command. Inspect the original schedule
+and linked job with `eef automation-schedules show SCHEDULE_ID`. Exact receipt
+reuse keeps the existing inspection-only behavior and does not resend a linked
+job stop.
+
+Shutdown closes Stop admission and drains its actual callback along with periodic
+and inspection work before interrupting schedules. An operation finishing during
+shutdown cannot return a current confirmation. No timeout claims that a blocked
+storage operation was terminated. The original revision, receipt, lock ordering,
+job-stop transitions and unknown-effects rules remain unchanged.
+
+This removes synchronous Stop processing from its own async command poll. Other
+operations can still block on shared journal/active-job locks; Enable, refusal
+resolution, general journal responsiveness and physical strong stop are separate
+work. Added regressions exercise the public command under real journal contention,
+busy admission, unchanged exact-receipt reuse, queued caller cancellation,
+deadline capacity retention and shutdown ownership. The focused automation suite
+passes 82 tests with one opt-in profiler ignored. Full workspace/hosted and
+matching-package acceptance remain pending; the previously accepted packages do
+not contain this change.
+
 ## Owned periodic journal worker (subsequent increment)
 
 Periodic schedule reads, due claims, settlement and checkpoint-error housekeeping

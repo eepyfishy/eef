@@ -226,6 +226,61 @@ fn report(
     }
     Ok(value)
 }
+fn stop_schedule_command(
+    engine: &crate::task::TaskEngine,
+    manager: &crate::automation_timer::TimerManager,
+    runtime: &str,
+    command: &ScheduleCommand,
+) -> Result<Value> {
+    let ScheduleCommand::Stop {
+        id,
+        revision,
+        operation_id,
+    } = command
+    else {
+        bail!("Schedule stop worker accepts only a stop command");
+    };
+    let (schedule, reused) = engine.stop_schedule(id, *revision, operation_id)?;
+    manager.active.lock().expect("timer active").remove(id);
+    let mut stopped = false;
+    if !reused {
+        if let Some(trigger) = &schedule.active_trigger {
+            if let Some(job) = engine.store.trigger_job(trigger)? {
+                if matches!(
+                    job.status,
+                    crate::task::PlanStatus::Review
+                        | crate::task::PlanStatus::AwaitingApproval
+                        | crate::task::PlanStatus::Approved
+                        | crate::task::PlanStatus::Running
+                        | crate::task::PlanStatus::Stopping
+                        | crate::task::PlanStatus::Interrupted
+                ) {
+                    engine.cancel(&job.plan_id)?;
+                    stopped = true;
+                }
+            }
+        }
+    }
+    let job = schedule
+        .active_trigger
+        .as_ref()
+        .map(|id| engine.store.trigger_job(id))
+        .transpose()?
+        .flatten();
+    report(
+        manager,
+        runtime,
+        command,
+        Inspection {
+            selected: Some(schedule),
+            job,
+            ..Inspection::default()
+        },
+        reused,
+        stopped,
+    )
+}
+
 impl Runtime {
     pub async fn automation_schedule_command(&self, request: ScheduleRequest) -> Result<Value> {
         if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
@@ -247,10 +302,18 @@ impl Runtime {
                 })
                 .await;
         }
+        if matches!(request.command, ScheduleCommand::Stop { .. }) {
+            let engine = self.engine.clone();
+            let manager = self.automation_timers.clone();
+            let runtime = self.instance_id.clone();
+            return self
+                .automation_timers
+                .stop(move || stop_schedule_command(&engine, &manager, &runtime, &request.command))
+                .await;
+        }
         let command = &request.command;
         let selected;
         let reused;
-        let mut stopped = false;
         match command {
             ScheduleCommand::ResolveRefusal {
                 id,
@@ -313,40 +376,10 @@ impl Runtime {
                     reused = was_reused;
                 }
             }
-            ScheduleCommand::Stop {
-                id,
-                revision,
-                operation_id,
-            } => {
-                let (s, was_reused) = self.engine.stop_schedule(id, *revision, operation_id)?;
-                reused = was_reused;
-                self.automation_timers
-                    .active
-                    .lock()
-                    .expect("timer active")
-                    .remove(id);
-                if !reused {
-                    if let Some(trigger) = &s.active_trigger {
-                        if let Some(job) = self.engine.store.trigger_job(trigger)? {
-                            if matches!(
-                                job.status,
-                                crate::task::PlanStatus::Review
-                                    | crate::task::PlanStatus::AwaitingApproval
-                                    | crate::task::PlanStatus::Approved
-                                    | crate::task::PlanStatus::Running
-                                    | crate::task::PlanStatus::Stopping
-                                    | crate::task::PlanStatus::Interrupted
-                            ) {
-                                self.engine.cancel(&job.plan_id)?;
-                                stopped = true;
-                            }
-                        }
-                    }
-                }
-                selected = Some(s);
-            }
-            ScheduleCommand::Show { .. } | ScheduleCommand::List { .. } => {
-                unreachable!("Read-only commands handled before management")
+            ScheduleCommand::Stop { .. }
+            | ScheduleCommand::Show { .. }
+            | ScheduleCommand::List { .. } => {
+                unreachable!("Stop and read-only commands handled by their own workers")
             }
         }
         let trigger = selected.as_ref().and_then(|s| s.active_trigger.clone());
@@ -365,7 +398,7 @@ impl Runtime {
                 ..Inspection::default()
             },
             reused,
-            stopped,
+            false,
         )
     }
     async fn schedule_enable_preflight(&self, id: &str, hash: &str) -> Result<String> {

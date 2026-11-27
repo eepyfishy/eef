@@ -32,21 +32,24 @@ pub(crate) struct TimerManager {
 struct JournalWorkState {
     periodic: bool,
     inspection: bool,
+    stop: bool,
 }
 #[derive(Clone, Copy)]
 enum WorkKind {
     Periodic,
     Inspection,
+    Stop,
 }
 impl JournalWorkState {
     fn slot(&mut self, kind: WorkKind) -> &mut bool {
         match kind {
             WorkKind::Periodic => &mut self.periodic,
             WorkKind::Inspection => &mut self.inspection,
+            WorkKind::Stop => &mut self.stop,
         }
     }
     fn any(&self) -> bool {
-        self.periodic || self.inspection
+        self.periodic || self.inspection || self.stop
     }
 }
 // One queued/running callback of each class, owned despite waiter cancellation.
@@ -138,6 +141,11 @@ impl TimerManager {
                 WorkKind::Inspection => {
                     bail!("Schedule inspection busy; no extra worker or queued read")
                 }
+                WorkKind::Stop => {
+                    bail!(
+                        "Schedule stop busy; inspect the original receipt before requesting stop again"
+                    )
+                }
             }
         }
         *slot = true;
@@ -164,6 +172,58 @@ impl TimerManager {
         })
         .await
         .context("Schedule inspection worker lost; no retry or execution")?
+    }
+    /// One admitted stop retains its worker ownership after its waiter leaves.
+    /// A queued, abandoned callback cannot start; an operation already underway
+    /// may finish. Stop receipt inspection, rather than replay, resolves that case.
+    pub(crate) async fn stop<T: Send + 'static>(
+        self: &Arc<Self>,
+        stop: impl FnOnce() -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        struct Waiter(Arc<AtomicBool>);
+        impl Drop for Waiter {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let work = self
+            .begin_work(WorkKind::Stop)?
+            .context("Coordinator stopping; inspect the schedule stop receipt")?;
+        let abandoned = Arc::new(AtomicBool::new(false));
+        let _waiter = Waiter(abandoned.clone());
+        let manager = self.clone();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let end = deadline.into_std();
+        let worker = tokio::task::spawn_blocking(move || {
+            let _owned = work;
+            if abandoned.load(Ordering::SeqCst)
+                || manager.closing.load(Ordering::SeqCst)
+                || Instant::now() >= end
+            {
+                bail!("Schedule stop abandoned before storage; inspect the receipt");
+            }
+            let value = stop()?;
+            if manager.closing.load(Ordering::SeqCst) || Instant::now() >= end {
+                bail!("Schedule stop result unconfirmed; inspect the original receipt");
+            }
+            Ok(value)
+        });
+        let result = tokio::time::timeout_at(deadline, worker)
+            .await
+            .context(
+                "Schedule stop deadline elapsed; inspect the original receipt, no automatic retry",
+            )?
+            .context(
+                "Schedule stop worker lost; inspect the original receipt, no automatic retry",
+            )?;
+        if self.closing.load(Ordering::SeqCst) || tokio::time::Instant::now() >= deadline {
+            bail!("Schedule stop confirmation arrived late; inspect the original receipt");
+        }
+        result
+    }
+    #[cfg(test)]
+    pub(crate) fn stop_pending(&self) -> bool {
+        self.journal_work.lock().unwrap().stop
     }
     async fn poll_schedule(
         self: &Arc<Self>,
@@ -399,6 +459,112 @@ mod tests {
         .expect("bounded worker transition");
     }
 
+    #[test]
+    fn cancelled_stop_waiter_cannot_start_queued_storage_without_shutdown() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let store = crate::jobs::JobStore::in_memory().unwrap();
+            let manager = TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let (release, held) = std::sync::mpsc::channel();
+            let occupied = tokio::task::spawn_blocking(move || {
+                started.send(()).unwrap();
+                let _ = held.recv_timeout(Duration::from_secs(5));
+            });
+            ready.await.unwrap();
+            let ran = Arc::new(AtomicBool::new(false));
+            let attempted = ran.clone();
+            let worker = manager.clone();
+            let request = tokio::spawn(async move {
+                worker
+                    .stop(move || {
+                        attempted.store(true, Ordering::SeqCst);
+                        Ok(())
+                    })
+                    .await
+            });
+            wait_for(|| manager.stop_pending()).await;
+            request.abort();
+            assert!(request.await.unwrap_err().is_cancelled());
+            assert!(manager.stop_pending());
+            assert!(manager.stop(|| Ok(())).await.is_err());
+            release.send(()).unwrap();
+            occupied.await.unwrap();
+            wait_for(|| !manager.stop_pending()).await;
+            assert!(!ran.load(Ordering::SeqCst));
+            assert!(!manager.closing.load(Ordering::SeqCst));
+            assert_eq!(manager.stop(|| Ok(7u8)).await.unwrap(), 7);
+            manager.close(&store).unwrap();
+        });
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn timed_out_stop_keeps_capacity_and_shutdown_drains_the_actual_operation() {
+        let store = crate::jobs::JobStore::in_memory().unwrap();
+        let manager = TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, held) = std::sync::mpsc::channel();
+        let worker = manager.clone();
+        let request = tokio::spawn(async move {
+            worker
+                .stop(move || {
+                    started.send(()).unwrap();
+                    held.recv_timeout(Duration::from_secs(15)).unwrap();
+                    Ok(())
+                })
+                .await
+        });
+        ready.await.unwrap();
+        let error = tokio::time::timeout(Duration::from_secs(8), request)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert!(error.to_string().contains("deadline elapsed"));
+        assert!(manager.stop_pending());
+        assert!(manager.stop(|| Ok(())).await.is_err());
+        assert_eq!(manager.inspect(|| Ok(11u8)).await.unwrap(), 11);
+        let closing = manager.clone();
+        let stopped = std::thread::spawn(move || closing.close(&store));
+        wait_for(|| manager.closing.load(Ordering::SeqCst)).await;
+        assert!(!stopped.is_finished());
+        assert!(manager.stop_pending());
+        release.send(()).unwrap();
+        stopped.join().unwrap().unwrap();
+        assert!(!manager.stop_pending());
+        assert!(manager.stop(|| Ok(())).await.is_err());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stop_result_completed_before_shutdown_is_not_confirmed_after_shutdown() {
+        let store = crate::jobs::JobStore::in_memory().unwrap();
+        let manager = TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, held) = std::sync::mpsc::channel();
+        let mut request = Box::pin(manager.stop(move || {
+            started.send(()).unwrap();
+            held.recv_timeout(Duration::from_secs(5)).unwrap();
+            Ok(9u8)
+        }));
+        assert!(futures_util::poll!(request.as_mut()).is_pending());
+        ready.await.unwrap();
+        release.send(()).unwrap();
+        wait_for(|| !manager.stop_pending()).await;
+        // The native result is ready but the owner has not observed it yet.
+        manager.close(&store).unwrap();
+        assert!(
+            request
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("confirmation arrived late")
+        );
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn inspection_is_single_flight_independent_of_periodic_slot_and_off_async_executor() {
         let store = crate::jobs::JobStore::in_memory().unwrap();
@@ -619,7 +785,7 @@ mod tests {
             .max_blocking_threads(1)
             .build()
             .unwrap();
-        for kind in [WorkKind::Periodic, WorkKind::Inspection] {
+        for kind in [WorkKind::Periodic, WorkKind::Inspection, WorkKind::Stop] {
             runtime.block_on(async {
                 let store = crate::jobs::JobStore::in_memory().unwrap();
                 let engine = TaskEngine::with_store(crate::event::EventBus::new(10), store.clone());
@@ -639,6 +805,14 @@ mod tests {
                     if matches!(kind, WorkKind::Inspection) {
                         return worker
                             .inspect(move || {
+                                read_probe.store(true, Ordering::SeqCst);
+                                Ok(None::<Trigger>)
+                            })
+                            .await;
+                    }
+                    if matches!(kind, WorkKind::Stop) {
+                        return worker
+                            .stop(move || {
                                 read_probe.store(true, Ordering::SeqCst);
                                 Ok(None::<Trigger>)
                             })

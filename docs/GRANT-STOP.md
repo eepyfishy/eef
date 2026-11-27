@@ -121,6 +121,12 @@ and the existing native command path. This establishes bounded persistence of
 the initial intent. Delivery, owned-process exit and physical effects require
 their own evidence.
 
+The subsequent [owner schedule Stop worker](AUTOMATION-SCHEDULES.md#owner-schedule-stop-worker-development)
+also moves the enclosing schedule fence and linked-job stop/readback off that
+command's async poll. Its caller deadline does not terminate an underway native
+write, confirm physical stop or authorize replay. Other synchronous journal and
+active-job-lock callers remain separate reliability work.
+
 ## Admission races and node persistence
 
 The node records exact stop identity in an independently versioned adjunct of

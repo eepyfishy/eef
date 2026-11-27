@@ -1470,6 +1470,112 @@ mod tests {
     use super::*;
     use crate::task::TaskEngine;
     use eefn::automation_occurrence::OccurrenceCommand;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn public_schedule_stop_keeps_async_executor_live_while_storage_is_held() {
+        use crate::automation_schedule::{ScheduleCommand, ScheduleRequest};
+        use std::time::Duration;
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("owner.json");
+        std::fs::write(
+            &config_path,
+            serde_json::to_vec(&json!({
+                "node":{"host":"127.0.0.1","port":0,"authentication":{"allow_legacy":false}},
+                "update":{"policy":"off"},"python":{"plugins":[]},
+                "firmware":{"repository":dir.path().join("firmware")}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let runtime = crate::Runtime::initialize(
+            crate::config::Config::load(Some(&config_path)).unwrap(),
+            dir.path().join("owner.db"),
+            false,
+        )
+        .await
+        .unwrap();
+        let store = runtime.engine.store.clone();
+        let (_, _, _, schedule) = fixture_with_validity(store.clone(), 60000);
+        let command = ScheduleCommand::Stop {
+            id: schedule.id.clone(),
+            revision: schedule.revision,
+            operation_id: uuid::Uuid::new_v4().to_string(),
+        };
+        let (ready, held) = tokio::sync::oneshot::channel();
+        let (release, hold) = std::sync::mpsc::channel();
+        let locked = store.clone();
+        let holder = std::thread::spawn(move || {
+            locked.with_test_journal_lock(|_| {
+                ready.send(()).unwrap();
+                let _ = hold.recv_timeout(Duration::from_secs(10));
+            })
+        });
+        held.await.unwrap();
+        let owner = runtime.clone();
+        let requested = command.clone();
+        let request = tokio::spawn(async move {
+            owner
+                .automation_schedule_command(ScheduleRequest {
+                    schema_version: 1,
+                    expected_runtime_id: owner.runtime_id().into(),
+                    command: requested,
+                })
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !runtime.automation_timers.stop_pending() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("stop admitted on the async executor");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!request.is_finished());
+        assert!(
+            runtime
+                .automation_schedule_command(ScheduleRequest {
+                    schema_version: 1,
+                    expected_runtime_id: runtime.runtime_id().into(),
+                    command: command.clone(),
+                })
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Schedule stop busy")
+        );
+        release.send(()).unwrap();
+        holder.join().unwrap();
+        let first = request.await.unwrap().unwrap();
+        assert!(crate::automation_schedule::confirmed(
+            &first,
+            &command,
+            runtime.runtime_id()
+        ));
+        assert_eq!(first["schedule"]["state"], "stopped");
+        assert_eq!(first["reused"], false);
+        assert_eq!(first["timer_active"], false);
+        let changes = store.with_test_journal_lock(|db| db.total_changes());
+        let reused = runtime
+            .automation_schedule_command(ScheduleRequest {
+                schema_version: 1,
+                expected_runtime_id: runtime.runtime_id().into(),
+                command: command.clone(),
+            })
+            .await
+            .unwrap();
+        assert!(crate::automation_schedule::confirmed(
+            &reused,
+            &command,
+            runtime.runtime_id()
+        ));
+        assert_eq!(reused["reused"], true);
+        assert_eq!(reused["job_stop_requested"], false);
+        assert_eq!(
+            store.with_test_journal_lock(|db| db.total_changes()),
+            changes
+        );
+        runtime.shutdown().await;
+    }
     /// Opt-in diagnostic: opens the supplied journal strictly read-only and
     /// reports timings only, never source/credentials, recovery or a new claim.
     #[test]
