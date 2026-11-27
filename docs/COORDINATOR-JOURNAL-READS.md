@@ -36,11 +36,45 @@ expired-before-admission refusal, idle-store retirement, and runtime shutdown
 while a reader holds journal ownership. A fifth regression refuses executor
 inspection before polling an expired future and rejects an immediately ready
 response that crosses its original bound. Existing owner/origin/TLS receipt,
-result and stop-inspection checks remain required. Fresh hosted validation is
-pending; no heavy local build or runtime test was started.
+result and stop-inspection checks remain required. The foundation's checks are
+included in the accepted source matrices recorded in [status](STATUS.md).
+The basic-job extension below needs its own verification.
+
+## Basic public job inspection (development)
+
+Basic job inspection now shares this existing four-slot reader. The owner HTTP
+handlers for `GET /api/jobs` and `GET /api/jobs/{id}`, and authenticated origin
+commands `jobs.list`, `jobs.find`, `jobs.get` and `jobs.output`, use the same
+historical service with a five-second caller deadline. It admits only those
+read operations; creation, removal, pause, resume and Stop cannot enter this
+callback. There is no synchronous fallback when the reader is busy or late.
+
+The existing owner/origin filtering, output selection, redaction, validation and
+JSON responses remain unchanged. An origin-looking payload field cannot replace
+the context supplied by the authenticated submission handler. This adds no
+principal registry, information-flow policy or module isolation guarantee.
+Output inspection remains explicit; moving it to a worker does not authorize a
+new recipient or a control operation.
+
+The actual read retains capacity and journal ownership after caller cancellation.
+Its result cannot acquire a new deadline or be presented after the original
+deadline. Other consumers of this reader share its existing capacity; no new
+thread pool, store, cache or execution authority is introduced. The direct Rust
+`job_request` interface remains synchronous for existing internal callers;
+mutating public job operations still need their own integration.
+
+New regressions cover the actual public handlers under journal contention,
+cancelled-reader ownership, unchanged origin filtering and explicit text output,
+and rejection of controls before worker admission with zero journal writes.
+Initial output fixtures were rejected by the existing fresh-job and task-origin
+rules. The corrected setup supplies origin to the planner, admits a pending job
+and checkpoints synthetic completion through the ordinary journal edit. All three
+focused regressions pass. Full workspace, hosted and matching-package acceptance
+remain pending; deployed packages have not been updated.
 
 This is the read side of the coordinator journal integration. Issuance,
-consumption ACKs, event/completion writes, `AttemptJournal` updates and other
-legacy synchronous reads still require broader asynchronous integration before
-public continuous execution can be accepted. No new public launch command,
+consumption ACKs, event/completion writes, `AttemptJournal` updates and remaining
+legacy synchronous callers have independent worker contracts and acceptance
+gates. This read path does not establish general journal responsiveness or
+public continuous execution acceptance. No new public launch command,
 continuous-source time, model limit, permission or stable-release claim follows.

@@ -1116,6 +1116,27 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
 }
 
 impl crate::task::TaskEngine {
+    /// Historical job inspection only. Keep public reads on the existing
+    /// bounded journal reader; never pass a control operation to this callback.
+    pub(crate) async fn inspect_job_request(
+        self: &Arc<Self>,
+        kind: &str,
+        payload: serde_json::Value,
+        origin: Option<eefn::context::RequestContext>,
+    ) -> Result<serde_json::Value> {
+        if !matches!(kind, "jobs.list" | "jobs.find" | "jobs.get" | "jobs.output") {
+            bail!("Job inspection cannot change jobs");
+        }
+        let engine = self.clone();
+        let kind = kind.to_owned();
+        self.store
+            .read_before(
+                tokio::time::Instant::now() + Duration::from_secs(5),
+                move |_store, _current| engine.job_request(&kind, payload, origin),
+            )
+            .await
+    }
+
     pub(crate) fn job_view(&self, plan: &Plan, details: bool) -> serde_json::Value {
         let mut value = view(plan, details);
         if self.require_legacy_execution().is_err() {

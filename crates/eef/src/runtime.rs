@@ -1065,6 +1065,11 @@ impl Runtime {
                 }
                 None => Err(anyhow::anyhow!("Job ID is required")),
             },
+            kind @ ("jobs.list" | "jobs.find" | "jobs.get" | "jobs.output") => {
+                self.engine
+                    .inspect_job_request(kind, message["payload"].clone(), Some(context))
+                    .await
+            }
             kind if kind.starts_with("jobs.") => {
                 self.engine
                     .job_request(kind, message["payload"].clone(), Some(context))

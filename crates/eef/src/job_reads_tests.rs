@@ -48,6 +48,150 @@ fn deadline() -> Instant {
     Instant::now() + Duration::from_secs(5)
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn job_inspection_preserves_origin_filtering_output_and_read_only_operations() {
+    let store = JobStore::in_memory().unwrap();
+    let engine =
+        crate::task::TaskEngine::with_store(crate::event::EventBus::new(10), store.clone());
+    let operation = uuid::Uuid::new_v4().to_string();
+    let owner =
+        eefn::context::RequestContext::new(operation.clone(), "owner".into(), vec![]).unwrap();
+    let other = eefn::context::RequestContext::new(
+        uuid::Uuid::new_v4().to_string(),
+        "other".into(),
+        vec![],
+    )
+    .unwrap();
+    let plan = TaskPlanner
+        .plan(
+            serde_json::from_value::<Goal>(json!({
+                "description":"Private synthetic history","template":"generate_text",
+                "params":{"prompt":"PRIVATE-input"},"request_context":owner
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let id = plan.plan_id.clone();
+    store.insert(plan).unwrap();
+    store
+        .change(&id, "Synthetic retained completion", |plan| {
+            let task = &mut plan.tasks[0];
+            let result = crate::task::TaskResult {
+                task_id: task.task_id.clone(),
+                success: true,
+                data: json!({"content":"PRIVATE-output"}),
+                error: String::new(),
+                error_type: String::new(),
+                duration_ms: 1,
+                attempts: 1,
+            };
+            task.result = Some(result.clone());
+            task.status = crate::task::TaskStatus::Completed;
+            task.attempts = 1;
+            plan.results.insert(result.task_id.clone(), result);
+            plan.status = crate::task::PlanStatus::Completed;
+            Ok(())
+        })
+        .unwrap();
+    let before = json!(store.get(&id).unwrap());
+    let changes = store.with_test_journal_lock(|db| db.total_changes());
+    for kind in ["jobs.list", "jobs.find", "jobs.get", "jobs.output"] {
+        let payload = json!({"id":id,"operation_id":operation,"origin_node":"other"});
+        let expected = engine
+            .job_request(kind, payload.clone(), Some(owner.clone()))
+            .unwrap();
+        let actual = engine
+            .inspect_job_request(kind, payload.clone(), Some(owner.clone()))
+            .await
+            .unwrap();
+        assert_eq!(actual, expected);
+        let denied = engine
+            .inspect_job_request(kind, payload, Some(other.clone()))
+            .await;
+        if matches!(kind, "jobs.list" | "jobs.find") {
+            assert_eq!(denied.unwrap()["jobs"], json!([]));
+        } else {
+            assert!(
+                denied
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Job not found for this node")
+            );
+        }
+    }
+    assert!(
+        engine
+            .inspect_job_request("jobs.output", json!({"id":id}), Some(owner))
+            .await
+            .unwrap()
+            .to_string()
+            .contains("PRIVATE-output")
+    );
+    assert_eq!(
+        engine
+            .inspect_job_request("jobs.get", json!({"id":id}), None)
+            .await
+            .unwrap(),
+        engine
+            .job_request("jobs.get", json!({"id":id}), None)
+            .unwrap()
+    );
+    let started = store.journal_reads_started();
+    for kind in [
+        "jobs.create",
+        "jobs.stop",
+        "jobs.pause",
+        "jobs.resume",
+        "jobs.remove",
+        "jobs.output.extra",
+    ] {
+        assert!(
+            engine
+                .inspect_job_request(kind, json!({"id":id}), None)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("cannot change jobs")
+        );
+    }
+    assert_eq!(store.journal_reads_started(), started);
+    assert_eq!(json!(store.get(&id).unwrap()), before);
+    assert_eq!(
+        store.with_test_journal_lock(|db| db.total_changes()),
+        changes
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn cancelled_job_inspection_retains_real_capacity_without_blocking_async_timers() {
+    let store = JobStore::in_memory().unwrap();
+    let engine =
+        crate::task::TaskEngine::with_store(crate::event::EventBus::new(10), store.clone());
+    let (held, ready) = hold(store.clone());
+    ready.await.unwrap();
+    let reader = engine.clone();
+    let request = tokio::spawn(async move {
+        reader
+            .inspect_job_request("jobs.get", json!({"id":"missing"}), None)
+            .await
+    });
+    started(&store).await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert!(!request.is_finished());
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    assert_eq!(store.journal_read_capacity_available(), CAPACITY - 1);
+    drop(held);
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while store.journal_read_capacity_available() != CAPACITY {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(store.with_test_journal_lock(|db| db.total_changes()), 0);
+}
+
 #[tokio::test]
 async fn reads_keep_exact_history_and_corruption_without_retaining_an_idle_store() {
     let store = JobStore::in_memory().unwrap();

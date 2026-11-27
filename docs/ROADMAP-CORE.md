@@ -60,8 +60,11 @@ retained extra gates. Existing bounded native journal services keep the delivery
 driver's reads and writes off the async worker. Cancellation retains actual
 storage capacity; the first stop attempt is latched before persistence so another
 job's notification cannot retry it. The original grant/session and intent-only
-receipt semantics remain. Initial `TaskEngine.cancel` persistence and other
-synchronous callers, general strong stop and physical/release gates stay open.
+receipt semantics remain. The subsequent public owner/origin Stop intent path
+uses its own bounded native worker. Owner schedule Stop now has a separate
+worker increment at `1f8226a`, with 1,948 local workspace tests passing and hosted
+verification pending. Other synchronous callers, general shared-lock
+responsiveness, strong stop and physical/release gates stay open.
 See [scope and evidence](GRANT-STOP.md#bounded-coordinator-delivery-persistence-development).
 
 Optional Python job CPU ceilings pass scoped source acceptance at `cfea8cc` in

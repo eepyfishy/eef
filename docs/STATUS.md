@@ -3,6 +3,42 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: basic public job inspection
+
+Owner HTTP job list/get and authenticated origin list/find/get/output now use
+the existing four-slot native journal reader with its original-store ownership
+and a five-second observation deadline. Origin filtering, explicit output
+selection, validation and response JSON are unchanged. Mutating job operations
+cannot enter this adapter; a busy reader has no synchronous fallback.
+
+Three focused regressions pass: actual public handlers with a held journal,
+cancelled-reader capacity retention, and matching owner/origin/output views with
+control rejection and zero writes. Initial fixture setup failures exercised the
+existing fresh-state and matching-origin rules; their logs remain failed evidence.
+Full workspace, hosted and matching-package acceptance are pending. Installed
+apps and the remote node are unchanged by this increment. This adds no principal
+or information-flow enforcement and does not complete general shared-lock
+responsiveness. See [read scope](COORDINATOR-JOURNAL-READS.md#basic-public-job-inspection-development).
+
+## In development: owner schedule Stop persistence
+
+Source `1f8226a` moves the complete owner schedule Stop operation, including its
+linked-job stop and result readback, to one separately admitted blocking worker.
+It preserves the existing journal, revision/receipt checks and no-replay rules.
+An async caller deadline does not release the actual operation's capacity or
+claim that a native write ended. Shutdown drains that ownership, and late results
+cannot become current confirmations.
+
+The focused automation suite passes 82 tests with one ignored opt-in profiler.
+The frozen local workspace/all-target run passes 1,948 tests with three ignored
+across 20 groups, including actual journal contention through the public command,
+busy admission, exact receipt reuse, queued cancellation, timeout and shutdown
+observations. [The four-job hosted matrix](https://github.com/eepyfishy/eef/actions/runs/45919830204)
+is still running. Matching packages and physical acceptance remain pending.
+The installed local coordinator and older remote node were unchanged by this
+increment. General shared-lock responsiveness and physical strong stop remain
+separate work. See [exact scope](AUTOMATION-SCHEDULES.md#owner-schedule-stop-worker-development).
+
 ## Verified development checkpoint: setup packages and older-node connectivity
 
 Clean source `4f97604` passes

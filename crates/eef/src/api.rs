@@ -815,11 +815,12 @@ async fn tasks(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
 }
 
 async fn jobs_list(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
-    Ok(Json(runtime.engine.job_request(
-        "jobs.list",
-        json!({}),
-        None,
-    )?))
+    Ok(Json(
+        runtime
+            .engine
+            .inspect_job_request("jobs.list", json!({}), None)
+            .await?,
+    ))
 }
 async fn jobs_create(
     State(runtime): State<Arc<Runtime>>,
@@ -832,11 +833,12 @@ async fn jobs_create(
     )?))
 }
 async fn jobs_get(State(runtime): State<Arc<Runtime>>, Path(id): Path<String>) -> ApiResult<Value> {
-    Ok(Json(runtime.engine.job_request(
-        "jobs.get",
-        json!({"id":id}),
-        None,
-    )?))
+    Ok(Json(
+        runtime
+            .engine
+            .inspect_job_request("jobs.get", json!({"id":id}), None)
+            .await?,
+    ))
 }
 async fn jobs_remove(
     State(runtime): State<Arc<Runtime>>,
@@ -993,6 +995,87 @@ async fn update_apply(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
 
 #[allow(dead_code)]
 fn _assert_result_send(_: Result<()>) {}
+
+#[cfg(test)]
+mod job_inspection_tests {
+    use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn public_job_handlers_keep_timers_live_and_cancelled_reads_owned_under_contention() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("owner.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "node":{"host":"127.0.0.1","port":0,"authentication":{"allow_legacy":false}},
+                "update":{"policy":"off"},"python":{"plugins":[]},
+                "firmware":{"repository":dir.path().join("firmware")}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let runtime = Runtime::initialize(
+            crate::config::Config::load(Some(&path)).unwrap(),
+            dir.path().join("owner.db"),
+            false,
+        )
+        .await
+        .unwrap();
+        let store = runtime.engine.store.clone();
+        let plan = crate::task::TaskPlanner.plan(serde_json::from_value(json!({
+            "description":"Owner history","template":"generate_text","params":{"prompt":"private"}
+        })).unwrap()).unwrap();
+        let id = plan.plan_id.clone();
+        store.insert(plan).unwrap();
+        let changes = store.with_test_journal_lock(|db| db.total_changes());
+        let (ready, held) = tokio::sync::oneshot::channel();
+        let (release, hold) = std::sync::mpsc::channel();
+        let locked = store.clone();
+        let holder = std::thread::spawn(move || {
+            locked.with_test_journal_lock(|_| {
+                ready.send(()).unwrap();
+                let _ = hold.recv_timeout(Duration::from_secs(10));
+            })
+        });
+        held.await.unwrap();
+        let getter = tokio::spawn(jobs_get(State(runtime.clone()), Path(id.clone())));
+        let listing = tokio::spawn(jobs_list(State(runtime.clone())));
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while store.journal_reads_started() == 0 || store.journal_read_capacity_available() != 2
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("public handlers admitted their bounded native reads");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!getter.is_finished());
+        assert!(!listing.is_finished());
+        getter.abort();
+        assert!(getter.await.unwrap_err().is_cancelled());
+        assert_eq!(store.journal_read_capacity_available(), 2);
+        release.send(()).unwrap();
+        holder.join().unwrap();
+        let listed = listing.await.unwrap().unwrap().0;
+        assert_eq!(listed["jobs"][0]["id"], id);
+        let got = jobs_get(State(runtime.clone()), Path(id.clone()))
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(
+            got,
+            runtime
+                .engine
+                .job_request("jobs.get", json!({"id":id}), None)
+                .unwrap()
+        );
+        assert_eq!(
+            store.with_test_journal_lock(|db| db.total_changes()),
+            changes
+        );
+        runtime.shutdown().await;
+    }
+}
 
 #[cfg(test)]
 mod workload_receipt_tests {

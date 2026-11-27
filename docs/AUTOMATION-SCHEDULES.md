@@ -38,9 +38,11 @@ resolution, general journal responsiveness and physical strong stop are separate
 work. Added regressions exercise the public command under real journal contention,
 busy admission, unchanged exact-receipt reuse, queued caller cancellation,
 deadline capacity retention and shutdown ownership. The focused automation suite
-passes 82 tests with one opt-in profiler ignored. Full workspace/hosted and
-matching-package acceptance remain pending; the previously accepted packages do
-not contain this change.
+passes 82 tests with one opt-in profiler ignored. Frozen source `1f8226a` also
+passes the full local workspace/all-target run: 1,948 tests with three ignored
+across 20 groups. [Hosted verification](https://github.com/eepyfishy/eef/actions/runs/45919830204)
+and matching-package acceptance remain pending; the previously accepted packages
+do not contain this change.
 
 ## Owned periodic journal worker (subsequent increment)
 
