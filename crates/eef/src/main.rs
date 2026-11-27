@@ -3334,8 +3334,7 @@ mod command_response_tests {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
@@ -3347,10 +3346,24 @@ async fn main() -> Result<()> {
     let install_root = eefn::updater::installation_root(&executable)?;
     let parsed = Args::try_parse();
     let service = parsed.as_ref().is_ok_and(|args| args.command.is_none());
+    // The synchronous wrapper retains package ownership through destruction of
+    // the async runtime, including service construction and error paths.
+    let _package_use = if service {
+        Some(eefn::package_use::for_service(&install_root, "eef")?)
+    } else {
+        None
+    };
+    run_application(executable, install_root, parsed)
+}
+
+#[tokio::main]
+async fn run_application(
+    executable: PathBuf,
+    install_root: PathBuf,
+    parsed: std::result::Result<Args, clap::Error>,
+) -> Result<()> {
+    let service = parsed.as_ref().is_ok_and(|args| args.command.is_none());
     if service {
-        // Inspect before selection handoff, identity writes or service startup.
-        // The installer alone owns recovery and may still hold its update lock.
-        eefn::setup_state::require_startup_ready(&install_root, "eef")?;
         eefn::console::detach_owned_service_console_checked()?;
     }
     let repair = parsed.as_ref().is_ok_and(|args| {

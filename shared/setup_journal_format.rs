@@ -233,14 +233,21 @@ impl Header {
             location(path)? == path,
             "A setup recovery parent was redirected"
         );
-        let in_root = path.strip_prefix(&self.root).ok().is_some_and(|relative| {
-            !relative.as_os_str().is_empty()
-                && !relative.components().next().is_some_and(|part| {
-                    part.as_os_str()
-                        .to_string_lossy()
-                        .eq_ignore_ascii_case(JOURNAL_NAME)
+        let in_root = path
+            .strip_prefix(&self.root)
+            .ok()
+            .is_some_and(|relative| !relative.as_os_str().is_empty());
+        ensure!(
+            !path.strip_prefix(&self.root).ok().is_some_and(|relative| {
+                relative.components().next().is_some_and(|part| {
+                    let name = part.as_os_str().to_string_lossy();
+                    [JOURNAL_NAME, ".update.lock", crate::package_use::LOCK_NAME]
+                        .iter()
+                        .any(|reserved| name.eq_ignore_ascii_case(reserved))
                 })
-        });
+            }),
+            "Setup recovery cannot replace internal control metadata"
+        );
         ensure!(
             in_root || self.external.iter().any(|expected| expected == path),
             "Setup recovery path is outside this installation and its shortcuts"

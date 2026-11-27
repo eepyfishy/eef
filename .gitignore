@@ -11,6 +11,7 @@
 *.bootstrap.sqlite3-journal
 *.log
 .eef-write-*
+.package-use.lock
 config.json
 .env
 .update_staging/

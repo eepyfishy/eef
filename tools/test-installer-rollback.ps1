@@ -113,7 +113,8 @@ try {
             if ($failure -notlike '*file changes were rolled back*' -or $failure -notlike '*Create Start menu entry*' -or $failure -like '*rollback needs attention*') { throw 'Failure did not reach the Start menu with successful rollback' }
             $after = Get-FixtureSnapshot @($destination,$env:APPDATA)
             $lock = Join-Path $destination '.update.lock'
-            if ($after.Count -ne $before.Count + 1 -or -not $after.ContainsKey($lock)) { throw 'Rollback left unexpected files or backups' }
+            $packageUse = Join-Path $destination '.package-use.lock'
+            if ($after.Count -ne $before.Count + 2 -or -not $after.ContainsKey($lock) -or -not $after.ContainsKey($packageUse)) { throw 'Rollback left unexpected files or backups' }
             foreach ($path in $before.Keys) {
                 if (-not $after.ContainsKey($path) -or $after[$path] -cne $before[$path]) { throw "Rollback did not restore $path" }
             }

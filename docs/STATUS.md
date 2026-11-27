@@ -3,6 +3,22 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased development: shared installation use during service lifetime
+
+Services now acquire shared installation access before handoff and retain it
+outside the async runtime. Normal setup requires exclusive installation access
+before recovery or payload changes, then releases it before application launch.
+The per-configuration service locks and the separate update lock keep their
+existing roles. Payload and journal paths reserve the new persistent control
+filename. This guard applies to cooperating new builds, not published alpha.8.
+
+The local installer crate passes 81 tests with one ignored. A new required native
+CI fixture exercises two actual versioned services using separate profiles, setup
+refusal until the last exits, and subsequent synthetic setup. Full hosted and
+matching-package acceptance are pending. Existing installed apps, the remote node,
+published alpha.8 assets and update feeds are unchanged by this increment.
+See [scope](EXE-SETUP-ROLLBACK.md#unreleased-development-service-lifetime-and-setup-ownership).
+
 ## alpha.8 packages and physical older-node compatibility
 
 Clean source `f74943bc77b58410779501354f2ae4baad4498d8` packages the accepted

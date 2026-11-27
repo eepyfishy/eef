@@ -424,3 +424,34 @@ and tested against an older physical node; see the separate
 These packages retain internal version `0.4.0-alpha.7`. They do not establish
 matching-candidate two-PC, real-model/media, signing, other-filesystem, disk-full,
 power-loss, production MSI rollback or stable-release acceptance.
+
+### Unreleased development: service lifetime and setup ownership
+
+Development services hold shared installation access through runtime destruction,
+using a persistent `.package-use.lock` file at the installation root. Separate
+configuration profiles and direct versioned launches share that root. Normal
+setup obtains exclusive access, under its existing update lock, before recovery
+or transaction writes. It releases package ownership before launching the app;
+the update lock is not held for a service's lifetime. Service startup inspects
+setup before creating ownership metadata and rechecks it under the shared guard.
+Help, version and offline command paths retain their existing behavior.
+
+Payloads and recovery journals cannot replace this control file. Existing guard
+bytes are preserved; an existing guard can be opened read-only by a service.
+Windows handles also prevent replacement of the active guard's pathname.
+The file remains after shutdown; its presence alone does not mean an app is
+running. The operating system releases ownership when its handles close.
+
+The local installer crate passes 81 tests with one ignored. A required Windows
+native fixture runs two real versioned services with separate configurations,
+attempts synthetic setup while both and then one remain, and installs only after
+the last exits. That fixture and the application changes still require hosted
+acceptance. No new production package or physical-node acceptance is claimed.
+
+This is cooperation between the new installer and new services. Published
+alpha.8 binaries, older installers, arbitrary filesystem changes and external
+processes do not acquire this guard. It is not authorization or process
+isolation. Updater and repair staging still create separate immutable generations;
+their existing update locking and authorization remain. Versioned executable
+firewall rules, full updater/service lifecycle and the other stable-release gates
+remain open.

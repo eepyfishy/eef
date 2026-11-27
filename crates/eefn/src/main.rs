@@ -3782,6 +3782,13 @@ fn main() -> Result<()> {
     let parsed = parse_args_from(std::env::args_os());
     startup_phase("parsed");
     let service = parsed.as_ref().is_ok_and(Args::is_service);
+    // Hold outside the runtime so errors and runtime destruction retain access
+    // until all of this service's runtime ownership has been released.
+    let _package_use = if service {
+        Some(eefn::package_use::for_service(&install_dir, "eefn")?)
+    } else {
+        None
+    };
     if parsed
         .as_ref()
         .is_ok_and(|args| args.panic_report.is_some() && !args.is_service())
@@ -3789,9 +3796,6 @@ fn main() -> Result<()> {
         bail!("Panic reports require a service launch, not a command")
     }
     if service {
-        // Inspect before selection handoff, identity writes or service startup.
-        // The installer alone owns recovery and may still hold its update lock.
-        eefn::setup_state::require_startup_ready(&install_dir, "eefn")?;
         eefn::console::detach_owned_service_console_checked()?;
     }
     if parsed.as_ref().is_ok_and(|args| {

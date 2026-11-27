@@ -17,6 +17,9 @@ pub mod atomic_file;
 mod coordinator_config;
 #[path = "../../../shared/installer_payload.rs"]
 mod installer_payload;
+#[path = "../../../shared/package_use.rs"]
+#[allow(dead_code)] // Applications hold shared guards; setup holds exclusive guards.
+mod package_use;
 #[path = "../../../shared/setup_journal_format.rs"]
 #[allow(dead_code)] // The installer writes; applications only inspect the same format.
 mod setup_journal_format;
@@ -249,6 +252,7 @@ fn payload_path(name: &str) -> Result<PathBuf> {
         !relative.components().next().is_some_and(|part| {
             let name = part.as_os_str().to_string_lossy();
             name.eq_ignore_ascii_case(INSTALL_LOCK)
+                || name.eq_ignore_ascii_case(package_use::LOCK_NAME)
                 || name.eq_ignore_ascii_case(transaction::JOURNAL_NAME)
         }),
         "installer payload uses a setup metadata filename"
@@ -339,6 +343,7 @@ fn install_files(
     progress: &Progress,
 ) -> Result<(File, Vec<String>)> {
     let (lock, required) = prepare_extraction(payload, destination)?;
+    let _package_use = package_use::for_setup(destination)?;
     let external = [shortcuts.startup.as_path(), shortcuts.menu.as_path()];
     if transaction::recover_pending(destination, name, &external)? {
         if let Some(report) = progress {
@@ -960,9 +965,56 @@ mod tests {
                 }
                 let mut expected = before.into_iter().map(|(path, _)| path).collect::<Vec<_>>();
                 expected.push(root.join(INSTALL_LOCK));
+                expected.push(root.join(package_use::LOCK_NAME));
                 expected.sort();
                 assert_eq!(setup_files_under(dir.path()), expected);
             }
+        }
+    }
+
+    #[test]
+    fn setup_waits_for_every_package_user_before_recovery_or_mutation() {
+        for name in ["eef", "eefn"] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().join("installation");
+            let payload = setup_fixture_payload(name);
+            drop(extract_payload(&payload, &root, name, &None).unwrap());
+            let executable = root.join(product(name).unwrap().executable);
+            fs::write(&executable, b"running application bytes").unwrap();
+            let shortcuts = Shortcuts {
+                startup: dir.path().join("startup.cmd"),
+                menu: dir.path().join("menu.cmd"),
+            };
+            let first = package_use::for_service(&root, name).unwrap();
+            let second = package_use::for_service(&root, name).unwrap();
+            let before = setup_files_under(dir.path());
+            let contents = before
+                .iter()
+                .map(|path| (path.clone(), fs::read(path).unwrap()))
+                .collect::<Vec<_>>();
+            let error = install_files(&payload, &root, name, false, &shortcuts, &None)
+                .err()
+                .expect("An active package user must refuse setup");
+            assert!(format!("{error:#}").contains("exclusive installation access"));
+            assert_eq!(setup_files_under(dir.path()), before);
+            for (path, bytes) in &contents {
+                assert_eq!(fs::read(path).unwrap(), *bytes);
+            }
+            assert!(!root.join(transaction::JOURNAL_NAME).exists());
+            assert!(!shortcuts.menu.exists());
+            drop(first);
+            assert!(install_files(&payload, &root, name, false, &shortcuts, &None).is_err());
+            assert_eq!(fs::read(&executable).unwrap(), b"running application bytes");
+            drop(second);
+            let (update_lock, warnings) =
+                install_files(&payload, &root, name, false, &shortcuts, &None).unwrap();
+            assert!(warnings.is_empty());
+            assert_eq!(fs::read(&executable).unwrap(), b"new application");
+            // Setup releases package ownership before the wrapper launches, even
+            // though that wrapper intentionally retains its update lock.
+            let service = package_use::for_service(&root, name).unwrap();
+            drop(service);
+            drop(update_lock);
         }
     }
 
@@ -980,7 +1032,10 @@ mod tests {
             let payload = setup_fixture_payload(name);
             let error = install_files(&payload, &root, name, true, &shortcuts, &None).unwrap_err();
             assert!(format!("{error:#}").contains("Create Start menu entry"));
-            assert_eq!(setup_files_under(&root), vec![root.join(INSTALL_LOCK)]);
+            assert_eq!(
+                setup_files_under(&root),
+                vec![root.join(package_use::LOCK_NAME), root.join(INSTALL_LOCK)]
+            );
             assert!(!shortcuts.startup.exists());
             assert_eq!(fs::read(&blocked).unwrap(), b"owner file");
             let corrected = Shortcuts {
@@ -1262,6 +1317,7 @@ mod tests {
                         .map(|(path, _)| path.clone())
                         .collect::<Vec<_>>();
                     expected.push(root.join(INSTALL_LOCK));
+                    expected.push(root.join(package_use::LOCK_NAME));
                     expected.sort();
                     assert_eq!(
                         setup_files_under(dir.path()),
@@ -1450,6 +1506,11 @@ mod tests {
         let destination = dir.path().join("fresh");
         for name in [
             INSTALL_LOCK,
+            package_use::LOCK_NAME,
+            ".package-use.lock/child",
+            ".PACKAGE-USE.LOCK",
+            "./.package-use.lock",
+            ".\\.PACKAGE-USE.LOCK",
             ".update.lock/child",
             transaction::JOURNAL_NAME,
             ".setup-transaction/child",

@@ -43,6 +43,7 @@ assert.match(python,/#\[cfg\(all\(test, windows, feature = "native-test-fixtures
 const stream=(await readFile(new URL('../crates/eefn/src/python_stream.rs',import.meta.url),'utf8')).replace(/\r\n/g,'\n');
 assert.match(stream,/#\[cfg\(not\(all\(test, windows, feature = "native-test-fixtures"\)\)\)\]\n        let host = HOST;/,'Every shipping build must select the unchanged host');
 assert.match(build,/cargo build --workspace --bins --examples --no-default-features --locked --offline --quiet -j2\n          exit \$LASTEXITCODE/);
+assert.match(native,/'test-package-use\.mjs'/,'Real versioned service/package ownership must remain a required native gate');
 assert(!/^\s*continue-on-error\s*:/m.test(workflow),'No failure gate may be converted to success');
 function condition(block,expected){
  const value=/^        if: \$\{\{ (.*) \}\}$/m.exec(block)?.[1];assert.equal(value,expected,'Review changed condition semantics explicitly');
@@ -67,7 +68,7 @@ for(const os of ['windows-2025','ubuntu-24.04'])for(const mode of ['headless','d
   assert.equal(canRollback(matrix,reachable,()=>cancelled),false,'Skipped prerequisites must not reach installer rollback execution');
  }
 }
-const scripts=[...native.matchAll(/'(test-[\w-]+\.mjs)'/g)].map(match=>match[1]);assert.equal(scripts.length,40);assert.equal(new Set(scripts).size,40);
+const scripts=[...native.matchAll(/'(test-[\w-]+\.mjs)'/g)].map(match=>match[1]);assert.equal(scripts.length,41);assert.equal(new Set(scripts).size,41);
 assert(scripts.includes('test-setup-startup.mjs'));
 assert(scripts.includes('test-interpreter-quality-ollama.mjs'));
 assert(scripts.includes('test-model-lifecycle-policy.mjs'));

@@ -74,6 +74,8 @@ mod network_interpretation;
 pub mod package_health;
 pub mod package_repair;
 pub mod package_setup;
+#[path = "../../../shared/package_use.rs"]
+pub mod package_use;
 pub mod panic_report;
 pub mod peer;
 pub mod permission_commands;
