@@ -16,8 +16,10 @@ cancelled-reader capacity retention, and matching owner/origin/output views with
 control rejection and zero writes. Initial fixture setup failures exercised the
 existing fresh-state and matching-origin rules; their logs remain failed evidence.
 Frozen source `65cae5e` passes the full local workspace/all-target run: 1,951 tests
-with three ignored across 20 groups. [Hosted verification](https://github.com/eepyfishy/eef/actions/runs/45921897326)
-and matching-package acceptance are pending. Installed
+with three ignored across 20 groups. [All four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/45921897326)
+also pass. Raw logs confirm 1,980 Windows/headless Rust tests with three ignored,
+all 40 native suites and retained extra gates. Windows/dashboard passes 1,951;
+both Linux jobs pass 1,879. Matching-package acceptance is pending. Installed
 apps and the remote node are unchanged by this increment. This adds no principal
 or information-flow enforcement and does not complete general shared-lock
 responsiveness. See [read scope](COORDINATOR-JOURNAL-READS.md#basic-public-job-inspection-development).
