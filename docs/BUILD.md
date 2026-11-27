@@ -148,6 +148,18 @@ existing output directory. The release directory contains exactly two
 self-extracting installers: one for eef and one for eefn. A combined ignored
 staging bundle is removed by default; use `-KeepBundle` for local diagnostics.
 
+## alpha.8 setup verification
+
+Clean source `f74943bc77b58410779501354f2ae4baad4498d8` produces separate alpha.8
+role installers with the complete optional Python/runtime payloads. Both pass
+fresh and alpha.6 upgrades, inventories, interrupted setup with startup refusal
+and recovery, and the full native wizard. Local Defender definitions
+`1.463.488.0` pass both exact files. Temporary role staging used the owned external
+directory option above; its child was removed while the supplied base remained.
+See [installer hashes and verification scope](RELEASE-0.4.0a8.md).
+Physical older-node connectivity is recorded separately from matching-candidate
+two-PC acceptance in [the physical procedure](TWO_PC_TEST.md).
+
 ## Published alpha.7 and subsequent setup verification
 
 [v0.4.0a7](https://github.com/eepyfishy/eef/releases/tag/v0.4.0a7) was built from

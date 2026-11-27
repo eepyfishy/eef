@@ -29,6 +29,14 @@ change the current stable v0.4.0 implementation and acceptance requirements.
 
 ## Direction and policy changes
 
+The alpha.8 checkpoint at `f74943b` passes the full four-job source matrix and
+matching local installer/wizard/interruption checks. Its real installed
+coordinator passes registration, six authenticated pings and empty-store job
+inspection across restart with the physical alpha.6 node. This remains older-node
+compatibility; matching alpha.8 permissions/workloads, updater/firewall lifecycle
+and stable v0.4.0 acceptance remain open. See [the checkpoint](STATUS.md) and
+[alpha.8 scope](RELEASE-0.4.0a8.md).
+
 Development [EXE setup rollback](EXE-SETUP-ROLLBACK.md) now covers ordinary
 failures across payloads, settings preparation, update selection and shortcuts
 under the shared setup/update lock. Checkpoint `afc2f2f` passes

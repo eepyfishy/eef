@@ -11,13 +11,13 @@ on stable v0.4 and explicit owner authorization.
 Start with the [user guide](docs/USER_GUIDE.md) for installation, node and model
 setup, a complete request walkthrough, and troubleshooting.
 
-[v0.4.0a7](https://github.com/eepyfishy/eef/releases/tag/v0.4.0a7), internal
-version `0.4.0-alpha.7`, is an opt-in Windows prerelease for two-PC testing.
+[v0.4.0a8](https://github.com/eepyfishy/eef/releases/tag/v0.4.0a8), internal
+version `0.4.0-alpha.8`, is an opt-in Windows prerelease for two-PC testing.
 It includes wizard installers, command-first private node enrollment, and
 [reviewed requests](docs/EXECUTION-BOUNDARY.md) through the running node.
 Automatic-update feeds are paused and feed-based updates reject prereleases.
 See the [active core roadmap](docs/ROADMAP-CORE.md) for the remaining stable
-release gates and [alpha.6 notes](docs/RELEASE-0.4.0a6.md) for that older build.
+release gates and [alpha.8 notes](docs/RELEASE-0.4.0a8.md) for the tested scope.
 The builds are unsigned. Both v0.3.2 installers have unresolved Defender reports
 on a second PC; see [the investigation](docs/ANTIVIRUS.md). A passing local scan
 is not a Microsoft false-positive verdict. Do not bypass antivirus detections.

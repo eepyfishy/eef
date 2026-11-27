@@ -49,6 +49,24 @@ Keep it on the explicit [node update path](COMMANDS.md#explicit-remote-updates)
 and record the built artifact hash and size when selecting it. Both public
 feeds were paused and contained no artifact fields at the time of this check.
 
+## Physical alpha.8 coordinator with an older node (2026-11-27)
+
+Source `f74943b` passes matching alpha.8 installer, runtime and full wizard checks
+on the build PC. After backup and a normal local coordinator upgrade, the real
+alpha.8 coordinator passes scoped checks with the existing physical alpha.6 node.
+Before and after a coordinator restart, accepted registration has one connected
+node, one registered node and zero pending registrations. Three authenticated
+`system.ping` samples pass in each round, and the public job listing correctly
+reads an empty fresh test store. The coordinator runtime changes across restart.
+
+The test used separate state, existing pairing and existing firewall permission.
+The remote installation and permissions were unchanged. Both test coordinator
+processes were stopped afterward. This does not accept matching alpha.8 nodes,
+new typed remote permissions, retained user jobs, real models or media. Install
+the [alpha.8 node package](RELEASE-0.4.0a8.md) explicitly on the second PC before
+running the matching-version acceptance checklist. Prereleases remain excluded
+from automatic updates.
+
 ## Physical older-node compatibility (2026-11-27)
 
 The real local coordinator was upgraded from the verified `4f97604` installer

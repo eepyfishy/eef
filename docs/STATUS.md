@@ -3,6 +3,47 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## alpha.8 packages and physical older-node compatibility
+
+Clean source `f74943bc77b58410779501354f2ae4baad4498d8` packages the accepted
+schedule Stop and public job inspection increments as `0.4.0-alpha.8`, with
+optional owned package staging on another drive. Its full local workspace run
+passes 1,951 tests, with three ignored across 20 groups.
+[All four hosted jobs pass](https://github.com/eepyfishy/eef/actions/runs/45926840326):
+Windows/headless has 1,980 Rust tests, three ignored and all 40 native suites;
+Windows/dashboard has 1,951 tests; both Linux jobs have 1,879. Raw logs retain the
+extra native gates and the new 12-case staging check.
+
+Both exact role installers pass fresh/alpha.6 upgrades, configuration
+preservation, complete immutable inventories (54 coordinator files and 2,288
+node files), actual packaged-process interruption, pending-setup startup refusal,
+normal retry recovery and full native wizard installation. The wizard validators
+were copied unchanged and hash-verified into temporary storage on another drive.
+The first summary collector rejected the harness's product-prefixed version
+strings; its failed summary remains retained. A corrected collector independently
+reconciled the successful installer reports and ran the remaining cases. An
+earlier build failure from a missing generated SQLite cache file also remains
+retained; rebuilding that package's cache resolved it without source changes.
+Local Defender definitions `1.463.488.0` pass both finished installers. This is
+neither code signing nor second-PC Defender acceptance.
+
+After a verified backup, the real local coordinator was updated normally to
+alpha.8. Its source and 54 immutable files match the package; owner configuration
+and database are preserved. With a separate fresh test database, the known
+physical alpha.6 node completed accepted registration before and after a test
+coordinator restart: each round has one connected node, one accepted registration,
+zero pending registrations and three successful authenticated `system.ping`
+samples. Both rounds also exercise the public job listing against the empty
+fresh store. Coordinator runtime IDs differ across the restart. Existing firewall
+rules and pairing were reused; no remote update, restart or permission change was
+requested. Owned test coordinator processes were stopped afterward.
+
+This accepts older-node compatibility only. Matching alpha.8 two-PC permissions,
+retained jobs, real models/media, updater/firewall lifecycle, disk-full/power-loss
+and remaining stable v0.4.0 requirements are open. Automatic update feeds remain
+disabled and exclude prereleases. See [release scope](RELEASE-0.4.0a8.md) and
+[physical acceptance](TWO_PC_TEST.md).
+
 ## In development: basic public job inspection
 
 Owner HTTP job list/get and authenticated origin list/find/get/output now use
