@@ -104,6 +104,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & ./tools/test-bundle-runtime-probes.ps1
           & ./tools/test-bundle-build-paths.ps1
+          & ./tools/test-bundle-staging.ps1
           & ./tools/test-installer-package-checks.ps1
           python -I -B python/test_bundled_paths.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

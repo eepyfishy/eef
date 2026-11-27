@@ -9,6 +9,7 @@ const firewall=step('Windows firewall command mocks (no policy changes)');
 const packageChecks=step('Windows bundle runtime probe checks (no packaging)');
 assert.match(packageChecks,/^        shell: powershell$/m);
 assert.match(packageChecks,/& \.\/tools\/test-bundle-build-paths\.ps1/);
+assert.match(packageChecks,/& \.\/tools\/test-bundle-staging\.ps1/);
 assert.match(packageChecks,/& \.\/tools\/test-installer-package-checks\.ps1/);
 assert.match(packageChecks,/python -I -B python\/test_bundled_paths\.py\n          if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/);
 const rollback=step('Native EXE setup rollback (synthetic; no release acceptance)');

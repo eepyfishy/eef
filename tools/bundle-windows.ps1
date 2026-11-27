@@ -2,6 +2,7 @@
 param(
     [string]$BundleDir,
     [string]$ReleaseDir = "release",
+    [string]$StagingBase,
     [switch]$SkipTests,
     [switch]$SkipOptionalPythonPackages,
     [switch]$KeepBuildArtifacts,
@@ -86,6 +87,7 @@ function Invoke-RequiredBundleProbe {
 }
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'bundle-staging.ps1')
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $versionMatch = Select-String -LiteralPath (Join-Path $workspace 'Cargo.toml') -Pattern '^version = "([0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?)"$'
 if ($versionMatch.Count -ne 1) { throw 'Workspace must declare one semantic release version' }
@@ -155,8 +157,9 @@ if ($RepairSourceTemplate) {
 foreach ($installer in @($eefRelease, $eefnRelease)) {
     if (Test-Path -LiteralPath $installer) { throw "Release installer already exists: $installer" }
 }
-$packageRoot = Join-Path $workspace ".package"
-if (Test-Path -LiteralPath $packageRoot) { throw "Package staging directory already exists: $packageRoot" }
+# Validate before downloads/builds; actual staging ownership starts at packaging.
+Get-BundleStagingPath -Workspace $workspace -StagingBase $StagingBase | Out-Null
+$packageStaging = $null
 
 $driveName = [IO.Path]::GetPathRoot($bundle).TrimEnd('\').TrimEnd(':')
 $freeBytes = (Get-PSDrive -Name $driveName).Free
@@ -288,6 +291,9 @@ try {
     }
     Write-Utf8NoBom -Path (Join-Path $bundle "bundle.json") -Content ($manifest | ConvertTo-Json)
     & $scanScript -Path $bundle -ReportPath (Join-Path $validation 'unpacked-bundle-scan.json')
+    $packageStaging = New-BundleStaging -Workspace $workspace -StagingBase $StagingBase
+    $packageRoot = $packageStaging.path
+    Write-Host "Temporary package staging: $packageRoot"
     $eefPackage = Join-Path $packageRoot "eef"
     $eefnPackage = Join-Path $packageRoot "eefn"
     foreach ($package in @($eefPackage, $eefnPackage)) {
@@ -408,12 +414,7 @@ try {
     $buildSucceeded = $true
     Write-Host "Bundle created at $bundle"
 } finally {
-    if (Test-Path -LiteralPath $packageRoot) {
-        $resolvedPackage = (Resolve-Path -LiteralPath $packageRoot).Path
-        if ($resolvedPackage.StartsWith($workspacePrefix, [StringComparison]::OrdinalIgnoreCase)) {
-            Remove-Item -LiteralPath $resolvedPackage -Recurse
-        }
-    }
+    if ($null -ne $packageStaging) { Remove-BundleStaging -Owner $packageStaging }
     if (-not $KeepBuildArtifacts) {
         Push-Location $workspace
         try { & $cargo clean } finally { Pop-Location }

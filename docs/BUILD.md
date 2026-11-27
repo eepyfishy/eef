@@ -126,6 +126,12 @@ report records the tested installer hashes with the revision.
 
 Useful switches:
 
+- `-StagingBase C:\build-scratch` — use an existing directory on another drive
+  for temporary role payloads and ZIPs. Each build creates a unique owned child;
+  cleanup removes that child, never the supplied base. Cleanup refuses changed
+  ownership markers and reparse points. The default remains workspace `.package`,
+  which must not already exist. Bundle and release outputs still stay inside the
+  workspace; this switch does not move compiler outputs (`CARGO_TARGET_DIR`).
 - `-SkipTests` — reuse a test result from the same source revision.
 - `-SkipOptionalPythonPackages` — omit Pillow, PyAutoGUI, audio, TTS, and camera
   packages while retaining CPython and standard-library plugins.
