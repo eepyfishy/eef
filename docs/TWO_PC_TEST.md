@@ -49,6 +49,36 @@ Keep it on the explicit [node update path](COMMANDS.md#explicit-remote-updates)
 and record the built artifact hash and size when selecting it. Both public
 feeds were paused and contained no artifact fields at the time of this check.
 
+## Physical older-node compatibility (2026-11-27)
+
+The real local coordinator was upgraded from the verified `4f97604` installer
+after configuration and database backup. Its source and all 54 immutable files
+matched the accepted package; owner configuration remained unchanged. A separate
+headless profile and fresh database prevented existing jobs from being replayed.
+Existing firewall permission and legacy pairing were reused without changing
+Windows protection, credentials or remote permissions.
+
+The coordinator reported internal version `0.4.0-alpha.7`; the known physical
+node reported running and installed versions `0.4.0-alpha.6`, with no restart
+required. Five authenticated `system.ping` samples passed. An initial check of
+the legacy route map did not establish accepted capability registration: the
+diagnostics at that point still showed registration pending. That observation
+is connectivity evidence only.
+
+A later coordinator restart observed a new coordinator runtime, the same known
+node and network address, one connected node, one accepted registration and zero
+pending registrations. Three further application probes passed. The typed
+`eef node permissions ... show` command returned `permission_reply_unconfirmed`
+with no mutation attempted. The published alpha.6 source lacks the newer typed
+permission/status contract; this mixed-version run does not accept remote
+permission management. No fallback save, remote update/restart or workload was
+sent. Owned test coordinator processes were stopped afterward.
+
+This is older-node compatibility evidence. It does not replace installing the
+matching candidate on both physical PCs, checking its permissions and retained
+jobs, exercising real models/media or verifying Defender on the second PC.
+Neither an empty model inventory nor a successful ping proves work readiness.
+
 ## Pair the nodes and verify the connection
 
 1. Use two owner-approved PCs on a private LAN or overlay. Back up their

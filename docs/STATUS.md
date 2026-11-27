@@ -3,6 +3,40 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Verified development checkpoint: setup packages and older-node connectivity
+
+Clean source `4f97604` passes
+[all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/45835216741).
+Windows/headless passes 1,973 Rust tests with three ignored, all 40 native suites
+and the retained extra gates. Windows/dashboard passes 1,944 tests; both Linux
+jobs pass 1,872. The Windows packaging gate includes the 16 bundled-Python checks.
+The subsequent verifier-only `c46274b` also passes
+[the complete matrix](https://github.com/eepyfishy/eef/actions/runs/45841262150).
+It fixes normal native stderr being treated as a validator failure, with explicit
+success, nonzero-exit and timeout checks. Application and package bytes are unchanged.
+
+Matching `4f97604` installers pass fresh installation, actual alpha.6 upgrades,
+full immutable inventories, native wizard installation and interruption/recovery
+for both roles. Actual interrupted executables refuse startup before reading
+configuration; an ordinary installer rerun repairs setup and preserves owner
+settings and unrelated data. The original failed Python destination and a deeper
+destination pass normal installation, native imports and offline runtime probes.
+See [package evidence and hashes](EXE-SETUP-ROLLBACK.md#matching-package-acceptance-for-4f97604).
+
+The real local coordinator was upgraded from the verified installer, preserving
+its configuration and backing up its database. Against the existing physical
+alpha.6 node, it passes five authenticated probes and a subsequent coordinator
+restart with accepted registration and three further probes. An initial route-map
+check was too weak to prove accepted registration; the stricter observation checks
+the gateway registration counters. Typed permission inspection remains unconfirmed;
+published alpha.6 lacks its newer control contract. No remote permission, update,
+restart or workload was sent. See [physical compatibility scope](TWO_PC_TEST.md#physical-older-node-compatibility-2026-11-27).
+
+These are internal alpha.7 development packages. Matching-candidate two-PC,
+real-model/media/resource/stop, default interpreter quality/bootstrap, MSI rollback,
+signing/Defender reputation and remaining core-roadmap gates stay open. Stable
+v0.4.0 is not accepted; no release or update feed changed.
+
 ## In development: deep bundled-Python imports
 
 Matching `59a9f43` packages built successfully and passed local Defender scans

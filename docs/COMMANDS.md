@@ -460,6 +460,13 @@ JSON save, automatic restart or workload is sent. Existing scopes/limits survive
 explicit `allow` widens only the chosen feature. See [authority, saved/applied
 state and remaining scope](FEATURE-PERMISSIONS.md).
 
+The typed remote permission commands require a node build containing the new
+runtime-bound control contract. Published alpha.6 lacks that contract; a newer
+coordinator can still connect and probe it while permission inspection remains
+unconfirmed. Upgrade to a matching tested node build before accepting this
+workflow. An unconfirmed reply does not authorize a generic configuration save
+or automatic retry.
+
 `eefn setup` explains the running node's connection, private receipt support,
 saved/applied interpreter choices and next steps without JSON or port numbers.
 `eefn --json setup` exposes the same shared backend report for clients. Inspection

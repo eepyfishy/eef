@@ -373,3 +373,54 @@ recovery does not authorize replaying interrupted application work. The
 development startup guard distinguishes unfinished setup from committed cleanup
 warnings; it is not a service-lifetime or older-binary guarantee. The separate
 package-mutation guard deliberately blocks both states.
+
+### Matching-package acceptance for `4f97604`
+
+Clean application/package source `4f97604b1c493a116b3159afa11fd42bff7de21f`
+passes [all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/45835216741),
+including 1,973 Windows/headless Rust tests with three ignored, 40 native suites
+and 16 Python path/loader checks. The local unchanged Rust workspace had passed
+1,944 tests with three ignored. Verifier-only `c46274b` subsequently passes
+[the same matrix](https://github.com/eepyfishy/eef/actions/runs/45841262150).
+
+| Development installer | Bytes | SHA-256 |
+| --- | ---: | --- |
+| eef | 23,748,754 | `a1297015b4d3459d7dcac763b902b16e2d32e8465c5b20676af5b65214f30944` |
+| eef node | 115,152,556 | `21b9397c8d52006c9e4ac901884e744805418a21e5c1814aae7296f84fac3bbf` |
+
+Both exact packages pass local Defender scans with definitions `1.463.471.0`.
+Their static installer prefix matches the compiled stub, has no LLVM runtime DLL
+dependency and contains no production interruption hook. Fresh installation and
+actual alpha.6 upgrades pass for both roles, preserving configuration, startup
+choice and retained versions. Complete inventories verify 54 coordinator and
+2,288 node immutable files, with mutable configuration checked separately.
+Full wizard installation passes review-before-write and Back preserving choices.
+
+Each normal packaged installer was terminated after candidate executable
+publication with an uncommitted journal. That actual executable refused startup
+before configuration parsing. An ordinary installer rerun completed recovery,
+preserved configuration and unrelated owner data, verified the full inventory
+and left no pending setup journal or scratch files. The node additionally passed
+bundled native imports and llama.cpp startup after recovery.
+
+Failed validation evidence remains retained: a collector initially misread a
+PowerShell JSON array, and a later node validator treated llama.cpp's normal
+version text on stderr as a terminating error. The corrected collector reused
+the completed fresh/upgrade reports. The corrected runtime validator checks the
+actual process exit code and deadline; the full node interruption case was then
+rerun successfully. These observer failures were not counted as passing runs.
+
+Normal installer reruns also pass at the original failed Python destination and
+a deeper destination, without shortening paths or changing Windows policy.
+Both import orders pass for eight modules, including native Windows event
+interoperability and a complete loaded DLL filename of 277 characters. Offline
+doctor and subsequent full immutable-inventory checks pass at both destinations.
+The earlier failed package reports remain historical; those two test installations
+were intentionally upgraded through the normal installer.
+
+The real local coordinator was subsequently upgraded with the verified package
+and tested against an older physical node; see the separate
+[compatibility observation](TWO_PC_TEST.md#physical-older-node-compatibility-2026-11-27).
+These packages retain internal version `0.4.0-alpha.7`. They do not establish
+matching-candidate two-PC, real-model/media, signing, other-filesystem, disk-full,
+power-loss, production MSI rollback or stable-release acceptance.

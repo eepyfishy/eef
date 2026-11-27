@@ -40,9 +40,15 @@ installed command-based private enrollment on one PC. Deep-folder staging and
 recovery pass two reproduced regressions and the original failing destination.
 Matching clients refuse package mutations until pending setup recovers.
 Newer development applications also inspect pending setup before service startup,
-allowing validated committed cleanup with a warning. This is locally exercised
-and requires its own hosted and matching-package acceptance; it does not protect
-already running or older binaries. See [startup scope](EXE-SETUP-ROLLBACK.md#service-startup-during-pending-setup-development).
+allowing validated committed cleanup with a warning. Matching `4f97604` packages
+now pass their own four-job hosted matrix, deep Python imports, fresh/alpha.6
+upgrades, full native wizard flows and interrupted-payload startup refusal followed
+by ordinary installer recovery. The verifier-only `c46274b` matrix also passes.
+The real local coordinator passes scoped connectivity/reconnect checks against
+the older physical alpha.6 node; typed permission inspection remains unconfirmed.
+This is not matching-candidate two-PC acceptance and does not protect already
+running or older binaries. See [current evidence](STATUS.md) and
+[startup scope](EXE-SETUP-ROLLBACK.md#service-startup-during-pending-setup-development).
 Physical acceptance, default model quality/bootstrap,
 power-loss/disk-full and other filesystems, production MSI rollback,
 signing/Defender and the remaining stable-release gates stay open.
