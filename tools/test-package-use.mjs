@@ -11,6 +11,7 @@ import {readLoopbackCoordinatorTemplate,coordinatorTemplatePorts} from './local-
 assert.equal(process.platform,'win32');
 const repository=resolve(import.meta.dirname,'..'),bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(repository,'target/debug'));
 const scratch=await mkdtemp(join(process.env.EEF_TEST_SCRATCH_PARENT||tmpdir(),'eef-package-use-'));
+const downloads=join(scratch,'downloads');await mkdir(downloads);
 const children=[],cases=[];
 const env={...process.env,RUST_LOG:'info',APPDATA:join(scratch,'appdata'),LOCALAPPDATA:join(scratch,'localappdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),EEF_NODE_PSK:randomBytes(32).toString('hex'),PATH:join(repository,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
 function launch(exe,args,extra={}){
@@ -48,7 +49,7 @@ try{
   const metadata=JSON.stringify({name:role,version,architecture:'x86_64-windows',python:'3.11.9-embedded',...(role==='eefn'?{llamacpp:'b10621'}:{})});
   await writeFile(join(versioned,'bundle.json'),metadata);await writeFile(join(installation,'bundle.json'),metadata);
   const old=Buffer.from('root bootstrap is not the running image');await writeFile(join(installation,role+'.exe'),old);
-  const payload=join(scratch,role+'-payload'),installer=join(scratch,role+'-fixture-installer.exe');await mkdir(payload);
+  const payload=join(scratch,role+'-payload'),installer=join(downloads,role+'-fixture-installer.exe');await mkdir(payload);
   await writeFile(join(payload,'bundle.json'),metadata);await writeFile(join(payload,role+'.exe'),'synthetic replacement, never launched');
   const defaultConfig=role==='eef'?'config/default_identity.yaml':'config.json';
   if(role==='eef')await mkdir(join(payload,'config'));
