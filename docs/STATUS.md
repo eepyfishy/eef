@@ -12,11 +12,20 @@ The per-configuration service locks and the separate update lock keep their
 existing roles. Payload and journal paths reserve the new persistent control
 filename. This guard applies to cooperating new builds, not published alpha.8.
 
-The local installer crate passes 81 tests with one ignored. A new required native
-CI fixture exercises two actual versioned services using separate profiles, setup
-refusal until the last exits, and subsequent synthetic setup. Full hosted and
-matching-package acceptance are pending. Existing installed apps, the remote node,
-published alpha.8 assets and update feeds are unchanged by this increment.
+The local installer crate passes 81 tests with one ignored. Frozen source
+`e5be8b1` passes [all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/46018033863).
+Windows/headless passes 1,995 Rust tests with three ignored and all 41 native
+suites; Windows/dashboard passes 1,966 tests and both Linux jobs pass 1,894.
+The new native fixture exercises two actual versioned services per role using
+separate profiles, setup refusal until the last exits, and subsequent synthetic
+setup. Existing startup, rollback, package inventory and staging gates also pass.
+The first CI run failed because the fixture put its mock installer above its
+installation directory; dedicated-directory validation correctly refused it.
+The corrected fixture uses a separate sibling downloads directory.
+
+Matching production packages and physical-node acceptance remain pending.
+Existing installed apps, the remote node, published alpha.8 assets and update
+feeds are unchanged by this increment.
 See [scope](EXE-SETUP-ROLLBACK.md#unreleased-development-service-lifetime-and-setup-ownership).
 
 ## alpha.8 packages and physical older-node compatibility

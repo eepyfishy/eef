@@ -442,11 +442,17 @@ Windows handles also prevent replacement of the active guard's pathname.
 The file remains after shutdown; its presence alone does not mean an app is
 running. The operating system releases ownership when its handles close.
 
-The local installer crate passes 81 tests with one ignored. A required Windows
-native fixture runs two real versioned services with separate configurations,
-attempts synthetic setup while both and then one remain, and installs only after
-the last exits. That fixture and the application changes still require hosted
-acceptance. No new production package or physical-node acceptance is claimed.
+The local installer crate passes 81 tests with one ignored. Source `e5be8b1`
+passes [the complete hosted matrix](https://github.com/eepyfishy/eef/actions/runs/46018033863):
+Windows/headless has 1,995 Rust tests with three ignored and all 41 native suites,
+Windows/dashboard has 1,966 tests and both Linux jobs have 1,894. The required
+Windows native fixture runs two real versioned services per role with separate
+configurations, attempts synthetic setup while both and then one remain, and
+installs only after the last exits. Retained startup, rollback and package gates
+also pass. The initial fixture placed its mock installer above the destination,
+triggering the existing dedicated-directory check; the corrected fixture uses a
+separate sibling downloads directory. Its failed run remains retained.
+No new production package or physical-node acceptance is claimed.
 
 This is cooperation between the new installer and new services. Published
 alpha.8 binaries, older installers, arbitrary filesystem changes and external
