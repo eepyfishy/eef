@@ -62,8 +62,10 @@ storage capacity; the first stop attempt is latched before persistence so anothe
 job's notification cannot retry it. The original grant/session and intent-only
 receipt semantics remain. The subsequent public owner/origin Stop intent path
 uses its own bounded native worker. Owner schedule Stop now has a separate
-worker increment at `1f8226a`, with 1,948 local workspace tests passing and hosted
-verification pending. Other synchronous callers, general shared-lock
+worker increment at `1f8226a`, with 1,948 local workspace tests and all four hosted
+jobs passing, including all 40 native suites. Basic public job inspection also
+uses the existing bounded journal reader at `65cae5e`; 1,951 local workspace
+tests pass, with hosted verification pending. Other synchronous callers, general shared-lock
 responsiveness, strong stop and physical/release gates stay open.
 See [scope and evidence](GRANT-STOP.md#bounded-coordinator-delivery-persistence-development).
 

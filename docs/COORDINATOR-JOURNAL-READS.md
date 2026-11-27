@@ -69,8 +69,10 @@ and rejection of controls before worker admission with zero journal writes.
 Initial output fixtures were rejected by the existing fresh-job and task-origin
 rules. The corrected setup supplies origin to the planner, admits a pending job
 and checkpoints synthetic completion through the ordinary journal edit. All three
-focused regressions pass. Full workspace, hosted and matching-package acceptance
-remain pending; deployed packages have not been updated.
+focused regressions pass. Frozen source `65cae5e` also passes the full local
+workspace/all-target run: 1,951 tests with three ignored across 20 groups.
+[Hosted verification](https://github.com/eepyfishy/eef/actions/runs/45921897326)
+and matching-package acceptance remain pending; deployed packages have not been updated.
 
 This is the read side of the coordinator journal integration. Issuance,
 consumption ACKs, event/completion writes, `AttemptJournal` updates and remaining

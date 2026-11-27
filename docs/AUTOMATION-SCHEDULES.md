@@ -40,9 +40,11 @@ busy admission, unchanged exact-receipt reuse, queued caller cancellation,
 deadline capacity retention and shutdown ownership. The focused automation suite
 passes 82 tests with one opt-in profiler ignored. Frozen source `1f8226a` also
 passes the full local workspace/all-target run: 1,948 tests with three ignored
-across 20 groups. [Hosted verification](https://github.com/eepyfishy/eef/actions/runs/45919830204)
-and matching-package acceptance remain pending; the previously accepted packages
-do not contain this change.
+across 20 groups. [All four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/45919830204)
+also pass. Raw logs confirm 1,977 Windows/headless Rust tests with three ignored,
+all 40 native suites and retained extra gates; Windows/dashboard passes 1,948
+and both Linux jobs pass 1,876. Matching-package acceptance remains pending;
+the previously accepted packages do not contain this change.
 
 ## Owned periodic journal worker (subsequent increment)
 

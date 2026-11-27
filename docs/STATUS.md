@@ -15,7 +15,9 @@ Three focused regressions pass: actual public handlers with a held journal,
 cancelled-reader capacity retention, and matching owner/origin/output views with
 control rejection and zero writes. Initial fixture setup failures exercised the
 existing fresh-state and matching-origin rules; their logs remain failed evidence.
-Full workspace, hosted and matching-package acceptance are pending. Installed
+Frozen source `65cae5e` passes the full local workspace/all-target run: 1,951 tests
+with three ignored across 20 groups. [Hosted verification](https://github.com/eepyfishy/eef/actions/runs/45921897326)
+and matching-package acceptance are pending. Installed
 apps and the remote node are unchanged by this increment. This adds no principal
 or information-flow enforcement and does not complete general shared-lock
 responsiveness. See [read scope](COORDINATOR-JOURNAL-READS.md#basic-public-job-inspection-development).
@@ -33,8 +35,10 @@ The focused automation suite passes 82 tests with one ignored opt-in profiler.
 The frozen local workspace/all-target run passes 1,948 tests with three ignored
 across 20 groups, including actual journal contention through the public command,
 busy admission, exact receipt reuse, queued cancellation, timeout and shutdown
-observations. [The four-job hosted matrix](https://github.com/eepyfishy/eef/actions/runs/45919830204)
-is still running. Matching packages and physical acceptance remain pending.
+observations. [All four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/45919830204)
+also pass. Raw logs confirm 1,977 Windows/headless Rust tests with three ignored,
+all 40 native suites and retained extra gates. Windows/dashboard passes 1,948;
+both Linux jobs pass 1,876. Matching packages and physical acceptance remain pending.
 The installed local coordinator and older remote node were unchanged by this
 increment. General shared-lock responsiveness and physical strong stop remain
 separate work. See [exact scope](AUTOMATION-SCHEDULES.md#owner-schedule-stop-worker-development).
