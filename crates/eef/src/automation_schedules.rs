@@ -1657,6 +1657,7 @@ mod tests {
             finalizations: Default::default(),
             workload_writes: super::job_finalizations::Queue::for_workload_writes(0, 0),
             stop_intents: super::job_finalizations::Queue::for_stop_intents(),
+            history_controls: super::job_finalizations::Queue::for_history_controls(),
             retired: RetirementSignal(tokio::sync::watch::channel(false).0),
         };
         for _ in 0..3 {
