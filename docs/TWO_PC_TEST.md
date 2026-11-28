@@ -5,6 +5,12 @@ Record the source revision, executable versions and package SHA-256 values.
 These steps use commands added after the published alphas. For the older
 package, see the [alpha diagnostic](#older-alpha-diagnostic-v040a3).
 
+The latest opt-in [alpha.9 packages](RELEASE-0.4.0a9.md) pass isolated installer,
+upgrade, service-lifetime, interruption/recovery and native wizard checks on the
+build PC. Matching physical alpha.9 acceptance is still pending. The older
+physical observations below retain their original versions and scope; the
+remote node was not updated by the alpha.9 publication.
+
 ## Verify setup and upgrade from real installers
 
 1. Record the candidate installer hashes and the Windows and Defender versions

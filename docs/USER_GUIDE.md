@@ -3,7 +3,7 @@
 eef connects your computers into a network of **nodes**. You send requests through
 a node; eef coordinates the work, and nodes provide the models and tools you allow.
 
-Start with matching [v0.4.0a7 installers](https://github.com/eepyfishy/eef/releases/tag/v0.4.0a7)
+Start with matching [v0.4.0a9 installers](https://github.com/eepyfishy/eef/releases/tag/v0.4.0a9)
 for the wizard and command-based private enrollment. The guide also covers
 ongoing development. Check your installed version and `--help` for the commands
 available to you. For alpha.6, use [the older installation guide](FIRST_RUN.md)

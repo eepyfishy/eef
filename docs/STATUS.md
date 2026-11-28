@@ -3,6 +3,30 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## alpha.9 installation-lifetime packages
+
+Published [v0.4.0a9](RELEASE-0.4.0a9.md) packages clean source `c179ce2` as
+`0.4.0-alpha.9`. The source matrix and hosted release application build pass.
+Both exact installers pass isolated fresh installation, real alpha.8 upgrades
+with settings preserved, complete immutable inventories, six production
+installation-lifetime cases with real versioned services, actual interruption
+with startup refusal and normal retry recovery for both roles, and full native
+wizard installation. A final independent audit verifies 102 retained evidence
+files and four copied validators after the successful temporary payloads are
+removed. Earlier same-version fixture refusal and collector failures remain
+retained separately; they do not count as passes.
+
+Runtime import probes and local Defender scans pass with definitions
+`1.463.507.0`. GitHub reports exactly two uploaded installer assets with the
+tested hashes. The release is an opt-in prerelease; both automatic feeds remain
+paused and unchanged. The installers are unsigned, and second-PC Defender,
+matching physical workloads and the remaining stable gates are unaccepted.
+The installed apps and remote node were unchanged by this publication.
+
+The newer bounded task-history increment below is verified on the development
+branch and is not included in the frozen alpha.9 source. See the
+[package acceptance scope](EXE-SETUP-ROLLBACK.md#alpha9-production-package-verification).
+
 ## Unreleased development: bounded legacy owner task history
 
 The owner `GET /api/tasks` route now shares the existing four-slot historical

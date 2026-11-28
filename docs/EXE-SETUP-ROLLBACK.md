@@ -461,3 +461,22 @@ isolation. Updater and repair staging still create separate immutable generation
 their existing update locking and authorization remain. Versioned executable
 firewall rules, full updater/service lifecycle and the other stable-release gates
 remain open.
+
+### alpha.9 production-package verification
+
+The [published alpha.9 installers](RELEASE-0.4.0a9.md) from clean source
+`c179ce2` pass the matching production checks after the source matrices above.
+Fresh installs and real alpha.8 upgrades preserve configuration and verify all
+54 coordinator and 2,288 node immutable files. Six actual self-extracting setup
+cases use two real versioned service profiles per role: setup is refused while
+two or one remain, preserves root/versioned inventories and configurations, and
+succeeds after the last exits. Both roles also pass actual process interruption,
+pending-setup startup refusal and ordinary retry recovery. The full native
+wizard passes installation, review-before-write and Back option preservation.
+
+These phases run sequentially to limit disk use. Reports, inventories, validator
+copies and hashes are retained before only their fresh temporary payloads are
+removed. The final audit verifies 102 retained files and the exact published
+installer hashes. This accepts those isolated production-package cases, not
+physical two-PC work, older-build cooperation, OS isolation, disk-full or
+power-loss recovery, versioned firewall rules or complete stable release scope.

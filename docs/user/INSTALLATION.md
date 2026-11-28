@@ -3,7 +3,7 @@
 [User guide](../USER_GUIDE.md) | [Using nodes](USING_NODES.md) |
 [Requests](REQUESTS.md) | [Troubleshooting](TROUBLESHOOTING.md)
 
-These steps apply to matching [v0.4.0a7 Windows installers](https://github.com/eepyfishy/eef/releases/tag/v0.4.0a7).
+These steps apply to matching [v0.4.0a9 Windows installers](https://github.com/eepyfishy/eef/releases/tag/v0.4.0a9).
 For alpha.6, see [the older dashboard setup](../FIRST_RUN.md).
 
 ## Install your first PC
@@ -22,25 +22,27 @@ For alpha.6, see [the older dashboard setup](../FIRST_RUN.md).
 5. Check the node's connection, then configure its permissions and models using
    [Using nodes](USING_NODES.md).
 
-Newer development builds explain invalid folder choices on **Installation
+The alpha.9 installers explain invalid folder choices on **Installation
 options**, before **Review setup**. Correct the folder and select **Next**
 again; no installation files are written until **Install**. If the installed
 app fails to open, those builds offer **Retry opening** or **Close**. Retrying
-opens the installed app without reinstalling it. These additions are not in
-the published alpha.7 installers.
+opens the installed app without reinstalling it.
 
-Development setup also attempts to restore its earlier file changes if a later
+Setup also attempts to restore its earlier file changes if a later
 installation step fails. If it reports that recovery needs attention, close the
 apps and keep the reported backup files. After an interrupted setup, run the
-matching development installer again, choose the same folder and select
+matching installer again, choose the same folder and select
 **Install** to recover before continuing. Recovery after power loss is not yet
 verified. See [setup recovery](../EXE-SETUP-ROLLBACK.md).
 
-Matching development apps also refuse to start when setup has not finished or
+The alpha.9 apps also refuse to start when setup has not finished or
 its recovery state cannot be verified. Run the matching installer in the same
 folder; keep its journal and backups. If setup completed and only backup
-cleanup is pending, the app can start with a cleanup warning. These startup
-checks are not in the published alpha.7 installers.
+cleanup is pending, the app can start with a cleanup warning.
+
+If setup says the installation is in use, stop every running copy of that app
+from the same installation folder and retry setup. Multiple profiles can share
+one installation. Closing a dashboard tab does not stop an app process.
 
 The installers include Python for supported optional adapters. You do not need
 to install Python separately for the bundled adapters. The node also includes
@@ -82,7 +84,7 @@ controller is needed.
 
 ## Connect both roles on the same PC
 
-With both matching alpha.7 apps running under the same Windows account,
+With both matching alpha.9 apps running under the same Windows account,
 inspect the local connection plan from the node folder:
 
 ```powershell
@@ -125,7 +127,7 @@ able to reach the coordinator over your LAN or an owner-managed private network.
 
 - For alpha.6, create a private connection code in eef's Network view
   and enter it in the other node's Network view.
-- For alpha.7 reviewed execution, provision the other PC's existing stable
+- For alpha.7 and later reviewed execution, provision the other PC's existing stable
   node ID and use a private, certificate-pinned invitation. Follow the exact
   [two-PC credential commands](../NODE-CREDENTIALS.md#command-based-migration).
   Same-PC `--enroll-local` is not a remote-PC discovery command.
@@ -148,7 +150,7 @@ an alpha does not subscribe the PC to later alphas. The repository's release
 documentation records paused feeds; an older client can report a feed-check error.
 Use an explicitly chosen matching installer for a test release.
 
-Before upgrading development builds, stop the apps and back up their settings
+Before upgrading test releases, stop the apps and back up their settings
 and data. Keep node identities, credentials, and the coordinator's job history
 together with that backup. Do not downgrade a newer job database into an older
 build or run two builds against the same data. Removing history is not a way to
