@@ -1,0 +1,47 @@
+name: Windows application build
+
+on:
+  push:
+    branches: ['validation/packages/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-applications-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  applications:
+    name: Unpackaged Windows applications
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      RUSTFLAGS: '-A linker-messages'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Install the pinned gnullvm compiler
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.98.1-x86_64-pc-windows-gnullvm --profile minimal
+          exit $LASTEXITCODE
+      - name: Build release applications and static installer stub
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tools/build-ci-windows-applications.ps1 -Toolchain '1.98.1-x86_64-pc-windows-gnullvm' -ExpectedSourceCommit '${{ github.sha }}'
+      # Official actions/upload-artifact v6, resolved from its upstream tag.
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: windows-applications-${{ github.sha }}
+          path: .validation/windows-applications/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 6

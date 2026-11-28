@@ -2,6 +2,29 @@
 
 ## Toolchain
 
+### Hosted compilation for low-storage development
+
+The `Windows application build` workflow runs on `validation/packages/**` pushes
+or by manual dispatch. It compiles the default-feature release applications and
+the static installer stub using pinned Rust `1.98.1` and the production bundler's
+hash-verified LLVM-MinGW download. It checks Windows product metadata, executable
+versions with only packaged runtime DLLs available, and the stub's compiler DLL
+imports. Build output discovery follows Cargo metadata.
+
+The three-day artifact contains only those executables, required compiler runtime
+DLLs and `application-build.json`, which records source, toolchain and file
+digests. It excludes the compiler cache and Python/model downloads. This avoids
+compilation on a low-storage development PC. Verify the workflow's exact source
+commit and artifact digest before using its contents. The manifest is a build
+record, not an independent authenticity or security guarantee.
+
+These are unpackaged, unscanned development files. The separate core verification
+matrix must pass at the same source. Normal installer assembly, Defender scanning,
+signing when required, package regressions and physical acceptance remain
+necessary. This workflow does not publish releases or change update feeds.
+
+### Local compilation
+
 Windows builds use Rust's `x86_64-pc-windows-gnullvm` host and LLVM-MinGW. This
 combination supplies the C compiler required by `ring` and bundled SQLite. The
 Windows bundler explicitly selects the `x86_64-pc-windows-gnullvm` host. The
