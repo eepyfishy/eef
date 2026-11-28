@@ -54,6 +54,13 @@ async fn retained_non_draft_job_ids_keep_public_pause_stop_and_removal() {
         assert_eq!(store.get(&id).unwrap().plan_id, supplied);
         let stopped = engine.stop_job_request(&id, Some("owner")).await.unwrap();
         assert_eq!(stopped["status"], json!(PlanStatus::Cancelled));
+        let plain = eefn::job_commands::render_stop(
+            &json!({"success":true,"acknowledged":true,"data":stopped}),
+            &id,
+        )
+        .unwrap();
+        assert!(plain.starts_with("Stop requested"));
+        assert!(plain.contains("not proof"));
         assert_eq!(
             engine
                 .control_history_job_request("jobs.remove", &id, Some("owner"))

@@ -161,6 +161,7 @@ that the existing command interface and journal accepted.
 These generic job controls now share the existing job-ID validator with the node
 command encoder. Draft/review, grant and receipt validation keep their separate
 rules. A regression inserts valid non-draft jobs, including a maximum-length ID,
-then exercises public command encoding, native pause, Stop and removal. This
+then exercises public command encoding, native pause, Stop, its human-readable
+acknowledgement and removal. This
 correction has not yet completed hosted verification. It changes no serialized
 command fields, origin ownership rule or execution authority.

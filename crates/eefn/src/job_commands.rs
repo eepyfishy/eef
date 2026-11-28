@@ -19,7 +19,7 @@ pub fn validate_job_id(id: &str) -> Result<()> {
 
 /// Presentation only. Never turn tracking state or an intent ACK into effect proof.
 pub fn render_stop(value: &Value, id: &str) -> Result<String> {
-    crate::request_drafts::validate_id(id)?;
+    validate_job_id(id)?;
     let status = value["data"]["status"].as_str();
     let acknowledged = value["success"] == true
         && value["acknowledged"] == true
