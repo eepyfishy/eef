@@ -3,6 +3,31 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased development: bounded job pause and removal
+
+Owner HTTP and authenticated origin-node pause/removal now share a separate
+two-slot native history-control worker, preserving the existing journal, origin
+matching, state/lineage checks, view redaction and response shapes. Origin and
+caller currency are checked under journal ownership. Abandoned queued work is
+discarded; actual native work keeps its slot after caller cancellation. Stop's
+reserved admission and historical reader capacity stay independent. An entered
+write can finish after observation ends, so callers must inspect before retrying.
+
+Frozen source `3877f46` passes [all four CI configurations](https://github.com/eepyfishy/eef/actions/runs/46167808003):
+Windows/headless has 1,998 passing Rust tests and all 41 native suites;
+Windows/dashboard has 1,969 passing tests and both Linux jobs have 1,897. Each
+has three ignored tests across 20 groups. Three new focused regressions and the
+extended actual public-handler test cover contention, cancellation, queued
+expiry, capacity, ownership/state rules and zero late writes. The first source
+failed compilation in an existing ignored profiling fixture; its missing queue
+initializer was corrected, and that failed run remains separate evidence.
+
+This is source acceptance. Matching packages and physical acceptance remain
+pending; published alpha.9 does not contain this increment. Creation, resume and
+remaining synchronous callers still need separate integration. It adds no
+execution, stronger remote Stop, principal verification or OS isolation guarantee.
+See [scope](COORDINATOR-JOURNAL-READS.md#pause-and-removal-development).
+
 ## alpha.9 installation-lifetime packages
 
 Published [v0.4.0a9](RELEASE-0.4.0a9.md) packages clean source `c179ce2` as

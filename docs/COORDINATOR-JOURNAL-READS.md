@@ -107,7 +107,7 @@ This follow-up is separate from the frozen alpha.9 installation candidate at
 task-history change. Pause/removal integration is described below; creation,
 resume and remaining internal synchronous callers still require separate work.
 
-## Pause and removal (development, verification pending)
+## Pause and removal (development)
 
 Owner HTTP and authenticated origin-node pause/removal requests now use a
 separate two-slot native history-control worker. It reuses the existing bounded
@@ -118,12 +118,13 @@ service; creation, resume and Stop retain their separate execution/control paths
 
 Each caller has one five-second observation deadline. The worker retains its
 actual slot and original journal until its native operation ends, even if the
-async caller is cancelled or times out. Origin matching and caller currency are checked
-while holding that journal, before changing the retained job. A queued command
+async caller is cancelled or times out. Origin matching and caller currency are
+checked while holding that journal, before changing the retained job. A queued command
 whose caller has gone or whose original deadline expired is discarded. Removal
 still checks finished state and schedule/occurrence lineage; reviewed execution
-still refuses pause without an acknowledgement contract. Views and response JSON
-are unchanged. Existing synchronous Rust callers keep their original interface.
+still refuses pause without an acknowledgement contract. Existing view redaction
+and response JSON shapes are preserved. Synchronous Rust callers keep their
+original interface.
 
 Cancellation does not undo a write already entered. A native write can finish
 after its caller's observation ends; inspect the job before issuing another
@@ -135,5 +136,16 @@ progress, caller cancellation, expired queued deletion, retained capacity,
 independent Stop/read admission, and rejection of execution operations. The
 public-handler contention regression also exercises pause/removal alongside
 historical reads, cancels those controls before releasing the journal, and checks
-unchanged job state with zero writes. Hosted Rust verification is pending. This
-increment is not included in the published alpha.9 installers.
+unchanged job state with zero writes.
+
+Frozen source `3877f46` passes [all four hosted configurations](https://github.com/eepyfishy/eef/actions/runs/46167808003).
+Windows/headless passes 1,998 Rust tests and all 41 native suites;
+Windows/dashboard passes 1,969 and both Linux configurations pass 1,897, each
+with three ignored tests across 20 groups. The first source failed compilation
+because an existing ignored timer-profiling fixture omitted the new queue field.
+The corrected source adds that field without removing a test or weakening a gate;
+the failed run remains retained separately.
+
+Matching packages and physical acceptance are pending. This increment is not in
+the published alpha.9 installers. Creation, resume and other synchronous callers
+still require their own integration; this is not general journal responsiveness.
