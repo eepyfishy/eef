@@ -10,10 +10,14 @@ use std::{
 };
 
 fn plan(store: &JobStore, origin: &str) -> String {
+    plan_with_id(store, origin, None)
+}
+
+fn plan_with_id(store: &JobStore, origin: &str, id: Option<&str>) -> String {
     let context =
         eefn::context::RequestContext::new(uuid::Uuid::new_v4().to_string(), origin.into(), vec![])
             .unwrap();
-    let plan = TaskPlanner
+    let mut plan = TaskPlanner
         .plan(
             serde_json::from_value::<Goal>(json!({
                 "description":"Synthetic history control", "template":"generate_text",
@@ -22,9 +26,43 @@ fn plan(store: &JobStore, origin: &str) -> String {
             .unwrap(),
         )
         .unwrap();
+    if let Some(id) = id {
+        plan.plan_id = id.to_owned();
+    }
     let id = plan.plan_id.clone();
     store.insert(plan).unwrap();
     id
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn retained_non_draft_job_ids_keep_public_pause_stop_and_removal() {
+    let store = JobStore::in_memory().unwrap();
+    let engine = TaskEngine::with_store(EventBus::new(10), store.clone());
+    for supplied in ["Legacy-job_1".to_owned(), "A".repeat(128)] {
+        let id = plan_with_id(&store, "owner", Some(&supplied));
+        // The same ID must remain valid in the node's existing command contract.
+        assert!(
+            eefn::job_commands::JobCommand::Pause { id: id.clone() }
+                .submission()
+                .is_ok()
+        );
+        let paused = engine
+            .control_history_job_request("jobs.pause", &id, Some("owner"))
+            .await
+            .unwrap();
+        assert_eq!(paused["status"], json!(PlanStatus::Paused));
+        assert_eq!(store.get(&id).unwrap().plan_id, supplied);
+        let stopped = engine.stop_job_request(&id, Some("owner")).await.unwrap();
+        assert_eq!(stopped["status"], json!(PlanStatus::Cancelled));
+        assert_eq!(
+            engine
+                .control_history_job_request("jobs.remove", &id, Some("owner"))
+                .await
+                .unwrap(),
+            json!({"removed":true})
+        );
+        assert!(store.get(&id).is_err());
+    }
 }
 
 struct Held {

@@ -149,3 +149,18 @@ the failed run remains retained separately.
 Matching packages and physical acceptance are pending. This increment is not in
 the published alpha.9 installers. Creation, resume and other synchronous callers
 still require their own integration; this is not general journal responsiveness.
+
+## Retained job identifiers (development, verification pending)
+
+The existing node job-command contract accepts 1-128 ASCII letters, digits,
+hyphens or underscores. Retained legacy jobs can use these identifiers even
+though new review/draft records require compact UUIDs. The native history and
+Stop adapters had reused the stricter draft validator, rejecting some job IDs
+that the existing command interface and journal accepted.
+
+These generic job controls now share the existing job-ID validator with the node
+command encoder. Draft/review, grant and receipt validation keep their separate
+rules. A regression inserts valid non-draft jobs, including a maximum-length ID,
+then exercises public command encoding, native pause, Stop and removal. This
+correction has not yet completed hosted verification. It changes no serialized
+command fields, origin ownership rule or execution authority.

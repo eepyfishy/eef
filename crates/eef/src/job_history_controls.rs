@@ -37,7 +37,7 @@ impl TaskEngine {
             "jobs.remove" => Control::Remove,
             _ => bail!("History control cannot start, resume or stop execution"),
         };
-        eefn::request_drafts::validate_id(id)?;
+        eefn::job_commands::validate_job_id(id)?;
         if let Some(origin) = origin {
             eefn::network::validate_remote_node_id(origin)?;
         }

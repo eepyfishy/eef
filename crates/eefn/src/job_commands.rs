@@ -4,6 +4,19 @@ use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+/// Existing public job identifiers include retained legacy IDs, not only drafts.
+pub fn validate_job_id(id: &str) -> Result<()> {
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        bail!("job ID must be 1-128 ASCII letters, digits, hyphens or underscores")
+    }
+    Ok(())
+}
+
 /// Presentation only. Never turn tracking state or an intent ACK into effect proof.
 pub fn render_stop(value: &Value, id: &str) -> Result<String> {
     crate::request_drafts::validate_id(id)?;
@@ -159,14 +172,7 @@ impl JobCommand {
             validate_operation_id(id)?;
         }
         let identified = |kind, id: &str| {
-            if id.is_empty()
-                || id.len() > 128
-                || !id
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-            {
-                bail!("job ID must be 1-128 ASCII letters, digits, hyphens or underscores")
-            }
+            validate_job_id(id)?;
             Ok((kind, json!({"id":id})))
         };
         match self {

@@ -19,7 +19,7 @@ impl TaskEngine {
         origin: Option<&str>,
         deadline: Instant,
     ) -> Result<crate::task::Plan> {
-        eefn::request_drafts::validate_id(id)?;
+        eefn::job_commands::validate_job_id(id)?;
         if let Some(origin) = origin {
             eefn::network::validate_remote_node_id(origin)?;
         }
