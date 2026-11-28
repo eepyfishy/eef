@@ -3,6 +3,26 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased development: bounded legacy owner task history
+
+The owner `GET /api/tasks` route now shares the existing four-slot historical
+journal reader and five-second observation deadline. A blocked journal read
+keeps its actual capacity and journal ownership after caller cancellation. The
+existing complete `plans` response is preserved; this adds no origin-node
+command, execution authority or new output disclosure path.
+
+Frozen source `9604ced` passes [all four hosted configurations](https://github.com/eepyfishy/eef/actions/runs/46109575905).
+Windows/headless has 1,995 passing Rust tests, three ignored and all 41 native
+suites; Windows/dashboard has 1,966 passing tests and both Linux jobs have 1,894.
+The extended public-handler regression checks task history together with job
+get/list under an actually held journal, timer progress, shared capacity,
+cancelled-reader ownership, unchanged responses and zero writes. Formatting,
+naming and backend dependency checks also pass locally, without Rust compilation.
+
+This change is not in the frozen alpha.9 installer candidate at `c179ce2`.
+Matching packages, physical acceptance, mutating job controls and remaining
+synchronous journal callers are still open. See [scope](COORDINATOR-JOURNAL-READS.md#legacy-owner-task-history-development).
+
 ## Unreleased development: shared installation use during service lifetime
 
 Services now acquire shared installation access before handoff and retain it

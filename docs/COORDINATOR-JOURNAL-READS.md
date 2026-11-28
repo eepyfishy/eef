@@ -84,7 +84,7 @@ gates. This read path does not establish general journal responsiveness or
 public continuous execution acceptance. No new public launch command,
 continuous-source time, model limit, permission or stable-release claim follows.
 
-## Legacy owner task history (development, verification pending)
+## Legacy owner task history (development)
 
 The owner-only `GET /api/tasks` handler now uses the same four-slot historical
 reader and five-second observation deadline. Its existing `plans` response and
@@ -95,6 +95,14 @@ views retain their separate redaction and explicit output-selection rules.
 The extended public-handler contention regression includes this task-list
 handler alongside job get/list. It checks current-thread timer progress, shared
 admission, capacity retention after caller cancellation, unchanged responses and
-zero journal writes. Hosted execution of this follow-up is pending; it is not
-part of the frozen alpha.9 installation candidate. Mutating job controls and
-remaining internal synchronous callers still require separate integration.
+zero journal writes. Frozen source `9604ced` passes the complete unfiltered
+workspace/all-target matrix in [all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/46109575905):
+Windows/headless has 1,995 passing Rust tests, three ignored and all 41 native
+suites; Windows/dashboard has 1,966 passing tests and both Linux jobs have 1,894.
+The public-handler test is compiled in each configuration; quiet test output
+reports group outcomes rather than individual test names.
+
+This follow-up is separate from the frozen alpha.9 installation candidate at
+`c179ce2`. Matching packages and physical acceptance remain pending for this
+task-history change. Mutating job controls and remaining internal synchronous
+callers still require separate integration.
