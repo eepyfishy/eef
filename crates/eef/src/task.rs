@@ -741,8 +741,18 @@ impl TaskEngine {
         self.claim(&id, || self.store.insert(plan))
     }
     pub fn pause(&self, id: &str) -> Result<Plan> {
+        self.pause_current(id, None, || true)
+    }
+    pub(crate) fn pause_current(
+        &self,
+        id: &str,
+        origin: Option<&str>,
+        current: impl Fn() -> bool,
+    ) -> Result<Plan> {
         self.store
             .change(id, "Pause requested; current batch may finish", |plan| {
+                anyhow::ensure!(current(), "Job pause abandoned while waiting for storage");
+                crate::jobs::require_control_origin(plan, origin)?;
                 if plan.is_review_request() { bail!("Reviewed grant execution has no pause acknowledgement; use Stop and inspect") }
                 plan.status = match plan.status {
                     PlanStatus::Running => PlanStatus::Pausing,

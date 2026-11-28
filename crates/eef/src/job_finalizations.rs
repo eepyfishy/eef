@@ -22,6 +22,8 @@ pub(crate) use workload_stop::StopCheckpoint;
 #[path = "job_grant_stop.rs"]
 mod grant_stop;
 pub(crate) use grant_stop::GrantStopCheckpoint;
+#[path = "job_history_controls.rs"]
+mod history_controls;
 #[path = "job_stop_intent.rs"]
 mod stop_intent;
 #[path = "job_workload_issuance.rs"]
@@ -80,6 +82,10 @@ impl Queue {
     pub(super) fn for_stop_intents() -> Self {
         // Small command metadata needs its own admission even when issuance
         // runs out of reserved completion capacity.
+        Self::with_capacity(2)
+    }
+    pub(super) fn for_history_controls() -> Self {
+        // Ordinary history controls cannot consume Stop's reserved admission.
         Self::with_capacity(2)
     }
     pub(super) fn new(max_count: usize, max_bytes: usize) -> Self {

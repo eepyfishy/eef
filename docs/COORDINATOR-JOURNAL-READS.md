@@ -104,5 +104,36 @@ reports group outcomes rather than individual test names.
 
 This follow-up is separate from the frozen alpha.9 installation candidate at
 `c179ce2`. Matching packages and physical acceptance remain pending for this
-task-history change. Mutating job controls and remaining internal synchronous
-callers still require separate integration.
+task-history change. Pause/removal integration is described below; creation,
+resume and remaining internal synchronous callers still require separate work.
+
+## Pause and removal (development, verification pending)
+
+Owner HTTP and authenticated origin-node pause/removal requests now use a
+separate two-slot native history-control worker. It reuses the existing bounded
+queue implementation and original journal. It cannot consume the four reader
+slots or Stop's separately reserved admission. Full admission refuses without a
+queued retry or a synchronous fallback. Only pause/removal can enter this
+service; creation, resume and Stop retain their separate execution/control paths.
+
+Each caller has one five-second observation deadline. The worker retains its
+actual slot and original journal until its native operation ends, even if the
+async caller is cancelled or times out. Origin matching and caller currency are checked
+while holding that journal, before changing the retained job. A queued command
+whose caller has gone or whose original deadline expired is discarded. Removal
+still checks finished state and schedule/occurrence lineage; reviewed execution
+still refuses pause without an acknowledgement contract. Views and response JSON
+are unchanged. Existing synchronous Rust callers keep their original interface.
+
+Cancellation does not undo a write already entered. A native write can finish
+after its caller's observation ends; inspect the job before issuing another
+command. This adds no execution dispatch, principal verification, stronger remote
+stop or OS isolation guarantee.
+
+Three new focused regressions cover origin/state rules, blocked-journal timer
+progress, caller cancellation, expired queued deletion, retained capacity,
+independent Stop/read admission, and rejection of execution operations. The
+public-handler contention regression also exercises pause/removal alongside
+historical reads, cancels those controls before releasing the journal, and checks
+unchanged job state with zero writes. Hosted Rust verification is pending. This
+increment is not included in the published alpha.9 installers.

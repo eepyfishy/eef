@@ -1065,6 +1065,14 @@ impl Runtime {
                 }
                 None => Err(anyhow::anyhow!("Job ID is required")),
             },
+            kind @ ("jobs.pause" | "jobs.remove") => match message["payload"]["id"].as_str() {
+                Some(id) => {
+                    self.engine
+                        .control_history_job_request(kind, id, Some(context.origin_node()))
+                        .await
+                }
+                None => Err(anyhow::anyhow!("Job ID is required")),
+            },
             kind @ ("jobs.list" | "jobs.find" | "jobs.get" | "jobs.output") => {
                 self.engine
                     .inspect_job_request(kind, message["payload"].clone(), Some(context))

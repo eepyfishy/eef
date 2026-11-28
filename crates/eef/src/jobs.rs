@@ -82,6 +82,19 @@ pub struct JobEvent {
     pub message: String,
 }
 
+pub(crate) fn require_control_origin(plan: &Plan, origin: Option<&str>) -> Result<()> {
+    anyhow::ensure!(
+        origin.is_none_or(|origin| {
+            plan.goal
+                .request_context
+                .as_ref()
+                .is_some_and(|context| context.origin_node() == origin)
+        }),
+        "Job not found for this node"
+    );
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct JobStore {
     connection: Mutex<Connection>,
@@ -93,6 +106,7 @@ pub struct JobStore {
     finalizations: job_finalizations::Queue,
     workload_writes: job_finalizations::Queue,
     stop_intents: job_finalizations::Queue,
+    history_controls: job_finalizations::Queue,
     // Must remain after connection and file lock: field drop order releases
     // both before announcing retirement. The receiver owns no journal/lease.
     retired: RetirementSignal,
@@ -280,6 +294,7 @@ impl JobStore {
             finalizations: job_finalizations::Queue::new(max_count, max_bytes),
             workload_writes: job_finalizations::Queue::for_workload_writes(max_count, max_bytes),
             stop_intents: job_finalizations::Queue::for_stop_intents(),
+            history_controls: job_finalizations::Queue::for_history_controls(),
             retired: RetirementSignal(tokio::sync::watch::channel(false).0),
         });
         store.validate_automations()?;
@@ -746,8 +761,18 @@ impl JobStore {
         Ok(())
     }
     pub fn remove_finished(&self, id: &str) -> Result<()> {
+        self.remove_finished_current(id, None, || true)
+    }
+    pub(crate) fn remove_finished_current(
+        &self,
+        id: &str,
+        origin: Option<&str>,
+        current: impl Fn() -> bool,
+    ) -> Result<()> {
         let connection = self.connection.lock().expect("job journal");
+        anyhow::ensure!(current(), "Job removal abandoned while waiting for storage");
         let plan = read(&connection, id)?;
+        require_control_origin(&plan, origin)?;
         automation_schedules::refuse_removal(&connection, &plan)?;
         if connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM automation_occurrences WHERE job_id=?1)",
@@ -767,6 +792,7 @@ impl JobStore {
         ) {
             bail!("Only finished jobs can be removed")
         }
+        anyhow::ensure!(current(), "Job removal abandoned before changing history");
         connection.execute("DELETE FROM durable_jobs WHERE job_id=?1", [id])?;
         self.source_changes
             .send_modify(|revision| *revision = revision.wrapping_add(1));

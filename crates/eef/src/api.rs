@@ -846,11 +846,12 @@ async fn jobs_remove(
     State(runtime): State<Arc<Runtime>>,
     Path(id): Path<String>,
 ) -> ApiResult<Value> {
-    Ok(Json(runtime.engine.job_request(
-        "jobs.remove",
-        json!({"id":id}),
-        None,
-    )?))
+    Ok(Json(
+        runtime
+            .engine
+            .control_history_job_request("jobs.remove", &id, None)
+            .await?,
+    ))
 }
 async fn jobs_control(
     State(runtime): State<Arc<Runtime>>,
@@ -861,6 +862,14 @@ async fn jobs_control(
     }
     if action == "stop" {
         return Ok(Json(runtime.engine.stop_job_request(&id, None).await?));
+    }
+    if action == "pause" {
+        return Ok(Json(
+            runtime
+                .engine
+                .control_history_job_request("jobs.pause", &id, None)
+                .await?,
+        ));
     }
     Ok(Json(runtime.engine.job_request(
         &format!("jobs.{action}"),
@@ -1043,8 +1052,16 @@ mod job_inspection_tests {
         let getter = tokio::spawn(jobs_get(State(runtime.clone()), Path(id.clone())));
         let listing = tokio::spawn(jobs_list(State(runtime.clone())));
         let task_listing = tokio::spawn(tasks(State(runtime.clone())));
+        let pauser = tokio::spawn(jobs_control(
+            State(runtime.clone()),
+            Path((id.clone(), "pause".into())),
+        ));
+        let remover = tokio::spawn(jobs_remove(State(runtime.clone()), Path(id.clone())));
         tokio::time::timeout(Duration::from_secs(3), async {
-            while store.journal_reads_started() == 0 || store.journal_read_capacity_available() != 1
+            while store.journal_reads_started() == 0
+                || store.journal_read_capacity_available() != 1
+                || store.history_control_started() == 0
+                || store.history_control_available() != 0
             {
                 tokio::task::yield_now().await;
             }
@@ -1055,9 +1072,16 @@ mod job_inspection_tests {
         assert!(!getter.is_finished());
         assert!(!listing.is_finished());
         assert!(!task_listing.is_finished());
+        assert!(!pauser.is_finished());
+        assert!(!remover.is_finished());
         getter.abort();
         assert!(getter.await.unwrap_err().is_cancelled());
         assert_eq!(store.journal_read_capacity_available(), 1);
+        pauser.abort();
+        remover.abort();
+        assert!(pauser.await.unwrap_err().is_cancelled());
+        assert!(remover.await.unwrap_err().is_cancelled());
+        assert_eq!(store.history_control_available(), 0);
         release.send(()).unwrap();
         holder.join().unwrap();
         let listed = listing.await.unwrap().unwrap().0;
@@ -1077,6 +1101,17 @@ mod job_inspection_tests {
                 .engine
                 .job_request("jobs.get", json!({"id":id}), None)
                 .unwrap()
+        );
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while store.history_control_available() != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            store.get(&id).unwrap().status,
+            crate::task::PlanStatus::Pending
         );
         assert_eq!(
             store.with_test_journal_lock(|db| db.total_changes()),
