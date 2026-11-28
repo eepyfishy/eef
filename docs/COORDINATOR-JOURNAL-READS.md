@@ -83,3 +83,18 @@ legacy synchronous callers have independent worker contracts and acceptance
 gates. This read path does not establish general journal responsiveness or
 public continuous execution acceptance. No new public launch command,
 continuous-source time, model limit, permission or stable-release claim follows.
+
+## Legacy owner task history (development, verification pending)
+
+The owner-only `GET /api/tasks` handler now uses the same four-slot historical
+reader and five-second observation deadline. Its existing `plans` response and
+complete retained-plan serialization are unchanged. This does not create a node
+submission command or widen the route's existing access boundary. Basic job
+views retain their separate redaction and explicit output-selection rules.
+
+The extended public-handler contention regression includes this task-list
+handler alongside job get/list. It checks current-thread timer progress, shared
+admission, capacity retention after caller cancellation, unchanged responses and
+zero journal writes. Hosted execution of this follow-up is pending; it is not
+part of the frozen alpha.9 installation candidate. Mutating job controls and
+remaining internal synchronous callers still require separate integration.

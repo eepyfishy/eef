@@ -1116,6 +1116,18 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
 }
 
 impl crate::task::TaskEngine {
+    /// Preserve the coordinator owner's legacy task-history view while sharing
+    /// bounded journal admission with other historical reads.
+    pub(crate) async fn inspect_task_plans(self: &Arc<Self>) -> Result<Vec<Plan>> {
+        let engine = self.clone();
+        self.store
+            .read_before(
+                tokio::time::Instant::now() + Duration::from_secs(5),
+                move |_store, _current| engine.list_plans(),
+            )
+            .await
+    }
+
     /// Historical job inspection only. Keep public reads on the existing
     /// bounded journal reader; never pass a control operation to this callback.
     pub(crate) async fn inspect_job_request(

@@ -811,7 +811,9 @@ async fn memory_reset(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
 }
 
 async fn tasks(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
-    Ok(Json(json!({"plans": runtime.engine.list_plans()?})))
+    Ok(Json(
+        json!({"plans": runtime.engine.inspect_task_plans().await?}),
+    ))
 }
 
 async fn jobs_list(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
@@ -1001,7 +1003,7 @@ mod job_inspection_tests {
     use super::*;
 
     #[tokio::test(flavor = "current_thread")]
-    async fn public_job_handlers_keep_timers_live_and_cancelled_reads_owned_under_contention() {
+    async fn public_history_handlers_keep_timers_live_and_cancelled_reads_owned_under_contention() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("owner.json");
         std::fs::write(
@@ -1040,8 +1042,9 @@ mod job_inspection_tests {
         held.await.unwrap();
         let getter = tokio::spawn(jobs_get(State(runtime.clone()), Path(id.clone())));
         let listing = tokio::spawn(jobs_list(State(runtime.clone())));
+        let task_listing = tokio::spawn(tasks(State(runtime.clone())));
         tokio::time::timeout(Duration::from_secs(3), async {
-            while store.journal_reads_started() == 0 || store.journal_read_capacity_available() != 2
+            while store.journal_reads_started() == 0 || store.journal_read_capacity_available() != 1
             {
                 tokio::task::yield_now().await;
             }
@@ -1051,13 +1054,19 @@ mod job_inspection_tests {
         tokio::time::sleep(Duration::from_millis(10)).await;
         assert!(!getter.is_finished());
         assert!(!listing.is_finished());
+        assert!(!task_listing.is_finished());
         getter.abort();
         assert!(getter.await.unwrap_err().is_cancelled());
-        assert_eq!(store.journal_read_capacity_available(), 2);
+        assert_eq!(store.journal_read_capacity_available(), 1);
         release.send(()).unwrap();
         holder.join().unwrap();
         let listed = listing.await.unwrap().unwrap().0;
         assert_eq!(listed["jobs"][0]["id"], id);
+        let task_history = task_listing.await.unwrap().unwrap().0;
+        assert_eq!(
+            task_history,
+            json!({"plans":runtime.engine.list_plans().unwrap()})
+        );
         let got = jobs_get(State(runtime.clone()), Path(id.clone()))
             .await
             .unwrap()
