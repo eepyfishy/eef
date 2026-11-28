@@ -265,6 +265,7 @@ try {
         if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination $bundle }
     }
 
+    New-Item -ItemType Directory -Path $tooling -Force | Out-Null
     $pythonVersion = '3.11.9'
     $pythonZip = Join-Path $tooling "python-$pythonVersion-embeddable-amd64.zip"
     $pythonUrl = "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-embeddable-amd64.zip"
