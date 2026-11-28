@@ -23,6 +23,25 @@ matrix must pass at the same source. Normal installer assembly, Defender scannin
 signing when required, package regressions and physical acceptance remain
 necessary. This workflow does not publish releases or change update feeds.
 
+After verifying the exact-source workflow and archive digest, unpack the artifact
+and pass its directory to the normal bundler:
+
+```powershell
+.\tools\bundle-windows.ps1 -ApplicationBuildDir PATH -SkipTests -StagingBase EXISTING_DIRECTORY
+```
+
+Use `-AllowPrerelease` when building a prerelease version. The input must match
+the current clean checkout, version, lockfile Git object and complete application
+inventory. Missing, extra, altered or linked files are refused before packaging.
+The imported files are copied and rechecked in owned staging, preserving the
+input even when signing is selected. This mode runs no Cargo compilation or
+cleanup and downloads no compiler. It retains normal runtime downloads, all
+Defender scans, metadata/runtime probes, signing options and final installer
+checks. It records the imported manifest digest in package provenance.
+`-SkipTests` acknowledges the separate exact-source core matrix; it does not
+establish that the matrix passed. The caller must verify that independently.
+Runtime assembly and installation tests still need free storage.
+
 ### Local compilation
 
 Windows builds use Rust's `x86_64-pc-windows-gnullvm` host and LLVM-MinGW. This

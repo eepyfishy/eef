@@ -3,6 +3,7 @@ param(
     [string]$BundleDir,
     [string]$ReleaseDir = "release",
     [string]$StagingBase,
+    [string]$ApplicationBuildDir,
     [switch]$SkipTests,
     [switch]$SkipOptionalPythonPackages,
     [switch]$KeepBuildArtifacts,
@@ -120,11 +121,19 @@ if ($signing) {
 }
 $sourceCommit = (& git -C $workspace rev-parse HEAD).Trim()
 $sourceDirty = -not [string]::IsNullOrWhiteSpace((& git -C $workspace status --porcelain | Out-String))
+$applicationBuild = $null
 $rustup = Join-Path $env:USERPROFILE ".cargo\bin\rustup.exe"
-if (-not (Test-Path -LiteralPath $rustup)) { throw "rustup.exe was not found; install Rust with rustup first" }
-$cargo = (& $rustup which --toolchain stable-x86_64-pc-windows-gnullvm cargo).Trim()
-if (-not (Test-Path -LiteralPath $cargo)) { throw "cargo.exe was not found in the gnullvm toolchain" }
-$releaseBuild = Get-BundleReleaseDirectory -CargoPath $cargo -Workspace $workspace
+if ($ApplicationBuildDir) {
+    if ($sourceDirty) { throw 'Prebuilt applications require a clean source checkout' }
+    $releaseBuild = (Resolve-Path -LiteralPath $ApplicationBuildDir).Path
+    $applicationBuild = & (Join-Path $PSScriptRoot 'check-windows-application-build.ps1') -ApplicationBuildDir $releaseBuild -ExpectedSourceCommit $sourceCommit -ExpectedVersion $version
+    if (-not $SkipTests) { throw 'Prebuilt applications require -SkipTests and separate exact-source core verification' }
+} else {
+    if (-not (Test-Path -LiteralPath $rustup)) { throw "rustup.exe was not found; install Rust with rustup first" }
+    $cargo = (& $rustup which --toolchain stable-x86_64-pc-windows-gnullvm cargo).Trim()
+    if (-not (Test-Path -LiteralPath $cargo)) { throw "cargo.exe was not found in the gnullvm toolchain" }
+    $releaseBuild = Get-BundleReleaseDirectory -CargoPath $cargo -Workspace $workspace
+}
 $bundle = if ([IO.Path]::IsPathRooted($BundleDir)) {
     [IO.Path]::GetFullPath($BundleDir)
 } else {
@@ -171,46 +180,61 @@ $llvm = Join-Path $tooling $llvmName
 $llvmZip = Join-Path $tooling "llvm-mingw.zip"
 $llvmUrl = "https://github.com/mstorsjo/llvm-mingw/releases/download/20260616/llvm-mingw-20260616-ucrt-x86_64.zip"
 $llvmSha256 = "b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35"
+if ($applicationBuild -and ($applicationBuild.compiler_source.url -cne $llvmUrl -or $applicationBuild.compiler_source.sha256 -cne $llvmSha256)) { throw 'Application compiler provenance differs from the production bundler' }
 $downloadedToolchain = $false
 $bundleCreated = $false
 $buildSucceeded = $false
 
 try {
-    if (-not (Test-Path -LiteralPath (Join-Path $llvm "bin\clang.exe"))) {
-        New-Item -ItemType Directory -Path $tooling -Force | Out-Null
-        Invoke-WebRequest -Uri $llvmUrl -OutFile $llvmZip -UseBasicParsing
-        $actual = (Get-FileHash -LiteralPath $llvmZip -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($actual -ne $llvmSha256) { throw "LLVM-MinGW checksum mismatch" }
-        Expand-Archive -LiteralPath $llvmZip -DestinationPath $tooling
-        Remove-Item -LiteralPath $llvmZip
-        $downloadedToolchain = $true
+    if ($applicationBuild) {
+        # Preserve the verified input, including when package signing is used.
+        # Copies belong to the same guarded staging owner as the role payloads.
+        $packageStaging = New-BundleStaging -Workspace $workspace -StagingBase $StagingBase
+        $applicationCopy = Join-Path $packageStaging.path 'applications'
+        New-Item -ItemType Directory -Path $applicationCopy | Out-Null
+        foreach ($entry in $applicationBuild.files) { Copy-Item -LiteralPath (Join-Path $releaseBuild $entry.name) -Destination $applicationCopy }
+        Copy-Item -LiteralPath (Join-Path $releaseBuild 'application-build.json') -Destination $applicationCopy
+        $releaseBuild = $applicationCopy
+        $applicationBuild = & (Join-Path $PSScriptRoot 'check-windows-application-build.ps1') -ApplicationBuildDir $releaseBuild -ExpectedSourceCommit $sourceCommit -ExpectedVersion $version
     }
-
-    $rustBin = Split-Path -Parent $cargo
-    $env:PATH = "$rustBin;$(Join-Path $llvm 'bin');$env:PATH"
-    $env:CC = Join-Path $llvm "bin\x86_64-w64-mingw32-clang.exe"
-    $env:CXX = Join-Path $llvm "bin\x86_64-w64-mingw32-clang++.exe"
-    $env:AR = Join-Path $llvm "bin\llvm-ar.exe"
-
-    Push-Location $workspace
-    try {
-        if (-not $SkipTests) {
-            & $cargo test --workspace --all-targets --locked
-            if ($LASTEXITCODE -ne 0) { throw "Rust tests failed" }
+    if (-not $applicationBuild) {
+        if (-not (Test-Path -LiteralPath (Join-Path $llvm "bin\clang.exe"))) {
+            New-Item -ItemType Directory -Path $tooling -Force | Out-Null
+            Invoke-WebRequest -Uri $llvmUrl -OutFile $llvmZip -UseBasicParsing
+            $actual = (Get-FileHash -LiteralPath $llvmZip -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $llvmSha256) { throw "LLVM-MinGW checksum mismatch" }
+            Expand-Archive -LiteralPath $llvmZip -DestinationPath $tooling
+            Remove-Item -LiteralPath $llvmZip
+            $downloadedToolchain = $true
         }
-        & $cargo build --workspace --release --locked
-        if ($LASTEXITCODE -ne 0) { throw "Rust release build failed" }
-        $savedRustFlags = $env:RUSTFLAGS
+
+        $rustBin = Split-Path -Parent $cargo
+        $env:PATH = "$rustBin;$(Join-Path $llvm 'bin');$env:PATH"
+        $env:CC = Join-Path $llvm "bin\x86_64-w64-mingw32-clang.exe"
+        $env:CXX = Join-Path $llvm "bin\x86_64-w64-mingw32-clang++.exe"
+        $env:AR = Join-Path $llvm "bin\llvm-ar.exe"
+
+        Push-Location $workspace
         try {
-            $env:RUSTFLAGS = (($savedRustFlags, "-A linker-messages -C target-feature=+crt-static") -join " ").Trim()
-            & $cargo build --release -p eef-installer-stub --locked
-            if ($LASTEXITCODE -ne 0) { throw "Static installer stub build failed" }
+            if (-not $SkipTests) {
+                & $cargo test --workspace --all-targets --locked
+                if ($LASTEXITCODE -ne 0) { throw "Rust tests failed" }
+            }
+            & $cargo build --workspace --release --locked
+            if ($LASTEXITCODE -ne 0) { throw "Rust release build failed" }
+            $savedRustFlags = $env:RUSTFLAGS
+            try {
+                $env:RUSTFLAGS = (($savedRustFlags, "-A linker-messages -C target-feature=+crt-static") -join " ").Trim()
+                & $cargo build --release -p eef-installer-stub --locked
+                if ($LASTEXITCODE -ne 0) { throw "Static installer stub build failed" }
+            } finally {
+                $env:RUSTFLAGS = $savedRustFlags
+            }
         } finally {
-            $env:RUSTFLAGS = $savedRustFlags
+            Pop-Location
         }
-    } finally {
-        Pop-Location
     }
+    $runtimeDirectory = if ($applicationBuild) { $releaseBuild } else { Join-Path $llvm 'bin' }
     & (Join-Path $PSScriptRoot 'check-windows-app-metadata.ps1') -BinaryDir $releaseBuild -Version $version
     if ($signing) {
         & $signScript -SignToolPath $SignToolPath -CertificateThumbprint $CertificateThumbprint -TimestampUrl $TimestampUrl -Path @(
@@ -237,7 +261,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $workspace "tools\BUNDLE_README.txt") -Destination (Join-Path $bundle "README.txt")
 
     foreach ($runtimeDll in @("libunwind.dll", "libc++.dll", "libwinpthread-1.dll")) {
-        $source = Join-Path $llvm "bin\$runtimeDll"
+        $source = Join-Path $runtimeDirectory $runtimeDll
         if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination $bundle }
     }
 
@@ -291,7 +315,7 @@ try {
     }
     Write-Utf8NoBom -Path (Join-Path $bundle "bundle.json") -Content ($manifest | ConvertTo-Json)
     & $scanScript -Path $bundle -ReportPath (Join-Path $validation 'unpacked-bundle-scan.json')
-    $packageStaging = New-BundleStaging -Workspace $workspace -StagingBase $StagingBase
+    if ($null -eq $packageStaging) { $packageStaging = New-BundleStaging -Workspace $workspace -StagingBase $StagingBase }
     $packageRoot = $packageStaging.path
     Write-Host "Temporary package staging: $packageRoot"
     $eefPackage = Join-Path $packageRoot "eef"
@@ -367,12 +391,15 @@ try {
         }
         $provenance = [ordered]@{
             version=$version; source_commit=$sourceCommit; source_dirty=$sourceDirty
-            rust_version=((& $rustup run stable-x86_64-pc-windows-gnullvm rustc --version) | Out-String).Trim()
+            rust_version=$(if ($applicationBuild) { $applicationBuild.rust_version } else { ((& $rustup run stable-x86_64-pc-windows-gnullvm rustc --version) | Out-String).Trim() })
             sources=@(
                 [ordered]@{name='CPython';url=$pythonUrl;sha256=$pythonSha256},
                 [ordered]@{name='LLVM-MinGW';url=$llvmUrl;sha256=$llvmSha256}
             )
             python_packages=@()
+        }
+        if ($applicationBuild) {
+            $provenance['application_build'] = [ordered]@{schema_version=$applicationBuild.schema_version;toolchain=$applicationBuild.toolchain;manifest_sha256=(Get-FileHash -LiteralPath (Join-Path $releaseBuild 'application-build.json') -Algorithm SHA256).Hash.ToLowerInvariant()}
         }
         if ($package -eq $eefnPackage) {
             $provenance.sources += [ordered]@{name='llama.cpp';url=$llamaUrl;sha256=$llamaSha256}
@@ -415,7 +442,7 @@ try {
     Write-Host "Bundle created at $bundle"
 } finally {
     if ($null -ne $packageStaging) { Remove-BundleStaging -Owner $packageStaging }
-    if (-not $KeepBuildArtifacts) {
+    if (-not $KeepBuildArtifacts -and -not $applicationBuild) {
         Push-Location $workspace
         try { & $cargo clean } finally { Pop-Location }
     }

@@ -92,7 +92,7 @@ $files=@(Get-ChildItem -LiteralPath $destination -File | Sort-Object Name | ForE
 })
 $report=[ordered]@{
     schema_version=1;kind='unpackaged_windows_applications';source_commit=$ExpectedSourceCommit;source_dirty=$false;version=$version
-    toolchain=$Toolchain;rust_version=(& rustc --version | Out-String).Trim();cargo_lock_sha256=(Get-FileHash -LiteralPath Cargo.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+    toolchain=$Toolchain;rust_version=(& rustc --version | Out-String).Trim();cargo_lock_sha256=(Get-FileHash -LiteralPath Cargo.lock -Algorithm SHA256).Hash.ToLowerInvariant();cargo_lock_git_blob=(& git rev-parse HEAD:Cargo.lock).Trim()
     compiler_source=[ordered]@{url=$constants.llvmUrl;sha256=$constants.llvmSha256}
     build_selection='workspace default features; separate static installer stub';files=$files
     version_probes_passed=$true;installer_static_runtime_check_passed=$true;scanned=$false;signed=$false;packaged=$false
